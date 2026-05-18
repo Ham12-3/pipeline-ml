@@ -1,0 +1,10 @@
+.venv/
+.claude/
+__pycache__/
+*.pyc
+# Local state produced by M0
+mlflow.db
+mlartifacts/
+mlruns/
+predictions.db
+artifacts/
