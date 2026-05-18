@@ -1,0 +1,137 @@
+# Observability: Pushgateway (a drop-box for the short-lived drift job's
+# metrics) + Prometheus (scrapes Pushgateway AND every inference pod's
+# /metrics). The canary AnalysisTemplate later queries Prometheus.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pushgateway
+  namespace: pipeline-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: pushgateway }
+  template:
+    metadata:
+      labels: { app: pushgateway }
+    spec:
+      containers:
+        - name: pushgateway
+          image: prom/pushgateway:v1.9.0
+          ports:
+            - containerPort: 9091
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pushgateway
+  namespace: pipeline-ml
+spec:
+  selector: { app: pushgateway }
+  ports:
+    - port: 9091
+      targetPort: 9091
+---
+# Prometheus needs to LIST pods to discover the Rollout's canary/stable pods.
+# A namespaced Role (not ClusterRole) is enough since we only scrape this ns.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: pipeline-ml
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus
+  namespace: pipeline-ml
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus
+  namespace: pipeline-ml
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: pipeline-ml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: pipeline-ml
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 5s
+      evaluation_interval: 5s
+    scrape_configs:
+      # Batch drift metrics arrive here via the drift CronJob.
+      - job_name: pushgateway
+        honor_labels: true          # keep the labels the job pushed
+        static_configs:
+          - targets: ['pushgateway:9091']
+      # Scrape EVERY inference pod individually (so canary + stable are both
+      # visible). The metric carries model_version, which the analysis keys on.
+      - job_name: inference
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [pipeline-ml]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: inference
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: ${1}:8000
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: pipeline-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: prometheus }
+  template:
+    metadata:
+      labels: { app: prometheus }
+    spec:
+      serviceAccountName: prometheus
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+      volumes:
+        - name: config
+          configMap: { name: prometheus-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: pipeline-ml
+spec:
+  selector: { app: prometheus }
+  ports:
+    - port: 9090
+      targetPort: 9090

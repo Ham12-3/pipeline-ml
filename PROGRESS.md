@@ -4,12 +4,14 @@ _Last updated: 2026-05-18_
 
 Legend: `[x]` done · `[~]` in progress / partial · `[ ]` not started
 
-**Overall:** Research + plan complete. **M0 + M1 + M2 committed; M3 fully built
-and verified.** Drift behaviour is byte-identical across M0 (laptop) → M1
-(Compose) → M2 (k3d Kubernetes). M3 adds the lineage receipt:
-`GET /lineage/{prediction_id}` returns full provenance (model version +
-training params + accuracy + git commit + dataset fingerprint). **M3 not yet
-committed.** M4–M5 not started.
+**Overall:** **M0–M3 committed and verified.** **M4 built but NOT yet
+verified** — committed as a work-in-progress checkpoint. M4 adds the closed
+loop (Argo Rollouts canary + Prometheus/Pushgateway + auto-rollback). During
+M4 verification two real bugs were found and fixed (see Resolved issues #6,
+#7); the good-release canary retry was launched but the k3d API server became
+unreachable under laptop resource pressure, so neither the good-release
+promotion nor the bad-release auto-rollback has been confirmed yet. M5 not
+started.
 
 ---
 
@@ -118,12 +120,33 @@ fingerprint differs even though the data is statistically identical. The
 receipt faithfully reports whatever was recorded at train time — but pin
 sklearn/numpy if a *cross-environment* identical hash is ever needed.
 
-## M4 — The closed loop
-- [ ] Install Argo Rollouts
-- [ ] Inference as a `Rollout` with canary strategy
-- [ ] Drift job pushes drift + canary-quality gauges to Pushgateway/Prometheus
-- [ ] `AnalysisTemplate` queries Prometheus; abort thresholds wired
-- [ ] Deliberately-bad model → automatic rollback verified
+## M4 — The closed loop  🚧 BUILT, NOT YET VERIFIED
+
+### Done (code + infra)
+- [x] Argo Rollouts controller installed (argo-rollouts ns; CRDs present)
+- [x] Inference app: serves a pinned `MODEL_VERSION` (falls back to the
+      `production` alias), scores a fixed labeled holdout at startup, exposes
+      `model_holdout_accuracy{model_version=…}` at `/metrics` (hand-rendered,
+      no new pip dep so the slow image layer stays cached)
+- [x] `ml/train.py --bad` / `TRAIN_BAD=1` trains a deliberately bad model
+      (shuffled labels) for the rollback proof
+- [x] `deploy/k8s/70-observability.yaml`: Pushgateway + Prometheus (+ RBAC,
+      pod-discovery scrape config)
+- [x] Drift CronJob pushes `model_drift_psi` to Pushgateway
+- [x] Inference is an Argo `Rollout` (canary 25% → analysis → 100%) +
+      `AnalysisTemplate` (Prometheus `min(model_holdout_accuracy) ≥ 0.7`) +
+      `model-release` ConfigMap selecting the version
+- [x] Baseline Rollout reached Healthy at v1 (holdout_accuracy 0.917);
+      Prometheus confirmed scraping the metric from all 4 pods
+
+### NOT done — verification blocked
+- [ ] Good release auto-promotes (canary passes) — **not confirmed**
+- [ ] Deliberately-bad model auto-rolls-back (canary fails) — **not started**
+- Blocker: after fixing bugs #6/#7 the good-release retry was launched but
+  the k3d API server went unreachable (`Unable to connect: EOF`) under
+  laptop resource pressure (postgres + mlflow + 4 inference + prometheus +
+  pushgateway + argo + train pods). Cluster needs recovery/right-sizing,
+  then re-run the good-release retry and the bad-release rollback.
 
 ## M5 — Dashboards & polish
 - [ ] Prometheus scrape config
@@ -168,6 +191,25 @@ sklearn/numpy if a *cross-environment* identical hash is ever needed.
    Host header is the pod IP, which the DNS-rebinding guard would 403. The
    mlflow Deployment uses a `tcpSocket` probe instead, keeping the guard strict
    for real traffic while letting readiness/liveness pass.
+6. **`lineage.py` missing from the inference image — FIXED (latent M3 bug).**
+   M3 added `lineage.py` at repo root but the inference Dockerfile never
+   `COPY`d it. M3 was verified *locally* (file on disk), so the bug stayed
+   hidden until M4 redeployed the image to k8s → `ModuleNotFoundError: No
+   module named 'lineage'` CrashLoopBackOff. Fix: `COPY lineage.py .` in
+   `services/inference/Dockerfile`. Lesson: verify containerised, not just
+   local. (The M3 commit's container path was broken; M4 fixes it.)
+7. **AnalysisTemplate Prometheus address — FIXED.** Used a bare `prometheus`
+   host. The Argo Rollouts controller runs in the `argo-rollouts` namespace
+   and issues the query from there, so the name resolved against the wrong
+   namespace → `server misbehaving`, analysis `Error`, false abort of a GOOD
+   model. Fix: FQDN `http://prometheus.pipeline-ml.svc.cluster.local:9090`.
+8. **k3d API unreachable under load — OPEN.** Running the full M4 stack on a
+   laptop (postgres + mlflow + 4 inference + prometheus + pushgateway + argo
+   + train pods) made the k3d API server return `Unable to connect: EOF`
+   mid-verification. Likely Docker Desktop resource limits. To recover:
+   ensure Docker Desktop has more CPU/RAM, `k3d cluster start pipeline-ml`,
+   re-apply resolved-issue #4, scale `inference` replicas down (e.g. 2), then
+   re-run the good-release retry + bad-release rollback.
 
 ## File inventory
 
@@ -182,8 +224,9 @@ ml/train.py          ml/baseline.py        ml/drift_metrics.py
 services/inference/app.py        services/inference/Dockerfile
 services/drift_job/drift_job.py  services/drift_job/Dockerfile
 deploy/docker-compose.yml
-deploy/k8s/  (00-namespace 10-config 20-postgres 30-mlflow
-              40-train-job 50-inference 60-drift-cronjob).yaml
+deploy/k8s/  (00-namespace 10-config 20-postgres 30-mlflow 40-train-job
+              50-inference[Rollout+AnalysisTemplate] 60-drift-cronjob
+              70-observability[Prometheus+Pushgateway]).yaml
 scripts/inject_drift.py
 ```
 Local (gitignored) state: `.venv/`, `.claude/`, `mlflow.db`, `mlartifacts/`,
@@ -193,19 +236,26 @@ PVCs in the `pipeline-ml` namespace; k3d binary at `C:\Users\mobol\bin`.
 
 ## How to resume
 
-M0 + M1 + M2 are committed to `master`. **M3 is built and verified but NOT yet
-committed.** k3d cluster is stopped (`k3d cluster start pipeline-ml` to resume;
-re-apply resolved-issue #4 if kubectl can't reach the API after start).
+M0–M3 are committed and verified. **M4 is committed as a WIP checkpoint —
+built but NOT verified.**
 
-- Re-demo M0 (no Docker): README "M0 quickstart".
-- Re-demo M1 (containers): README "M1 quickstart".
-- Re-demo M2 (k8s): README "M2 quickstart".
-- Re-demo M3 (lineage): train + serve (any layer), POST /predict, then
-  GET /lineage/{id} — see README "M3 — lineage receipt".
+**To finish M4 (pick up here):**
+1. Give Docker Desktop more CPU/RAM (laptop ran out under the full stack).
+2. `k3d cluster start pipeline-ml`; re-apply resolved-issue #4 (repoint
+   kubeconfig to `https://127.0.0.1:<port>`).
+3. Consider lowering the inference Rollout `replicas` to 2 to ease load.
+4. `kubectl apply -f deploy/k8s/`; wait for the Rollout Healthy at v1.
+5. **Good-release retry:** `model-release` MODEL_VERSION=3 + bump the
+   `pipeline-ml/release` annotation → expect canary analysis to PASS
+   (min holdout accuracy ≈ 0.92 ≥ 0.7) → auto-promote to 100%.
+6. **Bad-release proof:** run a `TRAIN_BAD=1` training pod (registers a
+   ~0.5-accuracy version), point `model-release` at it + bump the
+   annotation → expect canary analysis to FAIL → Argo auto-aborts →
+   previous good model keeps serving (rollback). Capture evidence.
+7. Then update README (M4 section + flip the milestone table) and
+   re-commit as verified-complete.
 
-**Next milestone: M4 — The closed loop.** Install Argo Rollouts; run inference
-as a `Rollout` with a canary strategy; have the drift job push drift +
-canary-quality gauges to Prometheus/Pushgateway; wire an `AnalysisTemplate`
-with abort thresholds; prove a deliberately-bad model auto-rolls-back. This is
-the milestone that needs the M2 k8s cluster running. Explain Argo Rollouts /
-canary / Prometheus / automated analysis in plain language before wiring them.
+- Re-demo M0/M1/M2/M3: see the matching README quickstart sections.
+
+**After M4: M5 — Dashboards & polish** (Grafana on the Prometheus data,
+Streamlit lineage page, scripted demo + screenshots).
