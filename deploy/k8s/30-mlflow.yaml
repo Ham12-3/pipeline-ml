@@ -1,0 +1,80 @@
+# MLflow tracking + registry server. Reuses the inference image (it already
+# has mlflow + the Postgres driver) but runs a different command.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mlartifacts
+  namespace: pipeline-ml
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mlflow
+  namespace: pipeline-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mlflow }
+  template:
+    metadata:
+      labels: { app: mlflow }
+    spec:
+      # Don't start MLflow until Postgres answers (k8s has no depends_on, so we
+      # block here in an initContainer that exits only once pg is reachable).
+      initContainers:
+        - name: wait-postgres
+          image: postgres:16
+          command: ["sh", "-c", "until pg_isready -h postgres -U pipeline; do echo 'waiting for postgres'; sleep 2; done"]
+      containers:
+        - name: mlflow
+          image: pipeline-ml-inference:dev
+          imagePullPolicy: IfNotPresent          # use the k3d-imported image
+          envFrom:
+            - configMapRef: { name: pipeline-config }   # MLFLOW_SERVER_ALLOWED_HOSTS
+          env:
+            - name: MLFLOW_BACKEND_STORE_URI
+              valueFrom:
+                secretKeyRef: { name: pipeline-secret, key: MLFLOW_BACKEND_STORE_URI }
+          args:
+            - mlflow
+            - server
+            - --host=0.0.0.0
+            - --port=5000
+            - --backend-store-uri=$(MLFLOW_BACKEND_STORE_URI)
+            - --artifacts-destination=/mlartifacts
+            - --serve-artifacts
+          ports:
+            - containerPort: 5000
+          volumeMounts:
+            - name: artifacts
+              mountPath: /mlartifacts
+          # TCP probe (not HTTP) on purpose: an HTTP probe's Host header would
+          # be the pod IP and the DNS-rebinding guard would 403 it. A port
+          # check sidesteps that while keeping the guard strict for real calls.
+          readinessProbe:
+            tcpSocket: { port: 5000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 5000 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim: { claimName: mlartifacts }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mlflow
+  namespace: pipeline-ml
+spec:
+  selector: { app: mlflow }
+  ports:
+    - port: 5000
+      targetPort: 5000

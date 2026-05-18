@@ -1,0 +1,6 @@
+# A namespace is just a folder inside the cluster that groups all our objects
+# so they don't collide with anything else and are easy to delete together.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pipeline-ml

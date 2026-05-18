@@ -1,0 +1,31 @@
+# Non-secret settings shared by the pods. Same values M1 set in compose, but
+# now centralised so every workload reads them the same way.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pipeline-config
+  namespace: pipeline-ml
+data:
+  MLFLOW_TRACKING_URI: "http://mlflow:5000"      # "mlflow" = the Service name
+  MLFLOW_ARTIFACT_ROOT: "mlflow-artifacts:/"     # store artifacts via the server
+  PIPELINE_ARTIFACTS_DIR: "/shared/artifacts"    # drift baseline (shared volume)
+  # MLflow 3.x DNS-rebinding guard. Setting this REPLACES the localhost
+  # defaults, so localhost is re-listed for completeness.
+  MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:*,localhost:*,127.0.0.1:*"
+  POSTGRES_USER: "pipeline"
+  POSTGRES_DB: "pipeline"
+---
+# Secrets hold credentials. In a real cluster these would come from a secret
+# manager; for a local learning cluster, plain values in a Secret object
+# (base64 at rest) is the standard pattern. The connection URLs embed the
+# password, so they live here too.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pipeline-secret
+  namespace: pipeline-ml
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "pipeline"
+  PREDICTIONS_DB_URL: "postgresql+psycopg2://pipeline:pipeline@postgres:5432/pipeline"
+  MLFLOW_BACKEND_STORE_URI: "postgresql://pipeline:pipeline@postgres:5432/pipeline"

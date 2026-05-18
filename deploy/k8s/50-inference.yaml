@@ -1,0 +1,57 @@
+# The inference API. A Deployment keeps it running and self-healing: if the
+# pod dies, Kubernetes makes a new one automatically.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference
+  namespace: pipeline-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: inference }
+  template:
+    metadata:
+      labels: { app: inference }
+    spec:
+      # Don't start serving until the model actually exists in the registry
+      # (i.e. the train Job has finished). Reuses the app image + contract so
+      # there are no duplicated literals here.
+      initContainers:
+        - name: wait-model
+          image: pipeline-ml-inference:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: pipeline-config }   # MLFLOW_TRACKING_URI
+          command: ["sh", "-c", "until python -c \"import mlflow; from mlflow.tracking import MlflowClient; from common import MLFLOW_TRACKING_URI, MODEL_NAME, MODEL_ALIAS; mlflow.set_tracking_uri(MLFLOW_TRACKING_URI); MlflowClient().get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)\"; do echo 'waiting for registered model'; sleep 4; done"]
+      containers:
+        - name: inference
+          image: pipeline-ml-inference:dev
+          imagePullPolicy: IfNotPresent
+          # (default image CMD runs uvicorn on :8000)
+          envFrom:
+            - configMapRef: { name: pipeline-config }   # MLFLOW_TRACKING_URI
+          env:
+            - name: PREDICTIONS_DB_URL
+              valueFrom:
+                secretKeyRef: { name: pipeline-secret, key: PREDICTIONS_DB_URL }
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference
+  namespace: pipeline-ml
+spec:
+  selector: { app: inference }
+  ports:
+    - port: 8000
+      targetPort: 8000

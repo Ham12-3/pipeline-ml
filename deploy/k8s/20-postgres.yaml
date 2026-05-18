@@ -1,0 +1,67 @@
+# Postgres: the shared prediction store + MLflow's bookkeeping DB.
+# PVC = a piece of disk the cluster provisions for us (via k3d's local-path
+# provisioner) so the data survives a pod restart.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pgdata
+  namespace: pipeline-ml
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: pipeline-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          envFrom:
+            - configMapRef: { name: pipeline-config }   # POSTGRES_USER/DB
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: pipeline-secret, key: POSTGRES_PASSWORD }
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata            # subdir avoids the lost+found clash
+          readinessProbe:                # "ready for queries?" gates dependents
+            exec:
+              command: ["pg_isready", "-U", "pipeline", "-d", "pipeline"]
+            periodSeconds: 5
+          livenessProbe:                 # "still alive?" restarts if it hangs
+            exec:
+              command: ["pg_isready", "-U", "pipeline", "-d", "pipeline"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: pgdata }
+---
+# A Service gives the pods a stable in-cluster DNS name + IP. Other pods reach
+# Postgres at "postgres:5432" no matter how often the pod is recreated.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: pipeline-ml
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432
+      targetPort: 5432

@@ -14,7 +14,7 @@ and automatically rolls back bad model releases (closed loop).
 |--|--|--|
 | M0 | ML logic, no infra: train → serve → log → detect drift | ✅ |
 | M1 | Containerize (Docker + docker-compose) | ✅ |
-| M2 | Local Kubernetes (k3d) | ⏳ |
+| M2 | Local Kubernetes (k3d) | ✅ |
 | M3 | Lineage receipt API | ⏳ |
 | M4 | Closed loop (Argo Rollouts auto-rollback) | ⏳ |
 | M5 | Dashboards & polish (Grafana, Streamlit) | ⏳ |
@@ -81,3 +81,49 @@ environment variables — nothing is hardcoded — so the prediction log moved f
 a local SQLite file to a shared Postgres service and the model now loads from a
 real MLflow server, while the verified drift numbers stay identical
 (normal → stable; drifted `f0` → PSI ≈ 1.83 SIGNIFICANT).
+
+## M2 quickstart (local Kubernetes via k3d)
+
+Requires Docker + [k3d](https://k3d.io) + kubectl. k3d runs a real
+Kubernetes cluster *inside Docker* on your machine.
+
+```bash
+# 1. Create the cluster
+k3d cluster create pipeline-ml
+# Windows/Docker Desktop only: if kubectl can't reach the API, repoint it off
+# the broken host.docker.internal entry to the published localhost port:
+#   PORT=$(docker port k3d-pipeline-ml-serverlb 6443/tcp | cut -d: -f2)
+#   kubectl config set-cluster k3d-pipeline-ml --server=https://127.0.0.1:$PORT
+
+# 2. Build images and load them into the cluster (no registry needed)
+docker build -f services/inference/Dockerfile  -t pipeline-ml-inference:dev .
+docker build -f services/drift_job/Dockerfile  -t pipeline-ml-drift:dev .
+k3d image import pipeline-ml-inference:dev pipeline-ml-drift:dev -c pipeline-ml
+
+# 3. Deploy everything (namespace, config, Postgres, MLflow, train Job,
+#    inference Deployment+Service, drift CronJob)
+kubectl apply -f deploy/k8s/
+kubectl wait --for=condition=complete job/train -n pipeline-ml --timeout=600s
+kubectl rollout status deployment/inference -n pipeline-ml
+
+# 4. Reach the API from the host
+kubectl port-forward svc/inference 8000:8000 -n pipeline-ml &   # background
+curl http://127.0.0.1:8000/health
+
+# 5. Send traffic, then run the drift check NOW (instead of waiting for the
+#    */5 CronJob schedule) by creating a one-off Job from it:
+python scripts/inject_drift.py --mode normal --n 400 --url http://127.0.0.1:8000
+kubectl create job --from=cronjob/drift drift-now -n pipeline-ml
+kubectl wait --for=condition=complete job/drift-now -n pipeline-ml --timeout=150s
+kubectl logs job/drift-now -n pipeline-ml          # -> stable
+
+# Free resources without deleting the cluster:  k3d cluster stop pipeline-ml
+# Start it again later:                          k3d cluster start pipeline-ml
+# Delete it entirely:                            k3d cluster delete pipeline-ml
+```
+
+**What M2 proves:** the *same* images from M1 run on a real Kubernetes
+cluster. Inference is a self-healing **Deployment + Service**, training is a
+run-once **Job**, and the drift check is an automatic **CronJob** (every 5
+min) — yet the verified numbers are still identical (train accuracy 0.9380;
+normal → max PSI 0.0636 stable; drifted `f0` → PSI 1.8285 SIGNIFICANT).

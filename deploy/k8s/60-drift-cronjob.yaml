@@ -1,0 +1,38 @@
+# The drift job, now on a schedule instead of run by hand. A CronJob spawns a
+# Job (which spawns a pod) on the cron schedule below — this is the M0 "run the
+# drift job" step turned into an automatic, recurring check.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: drift
+  namespace: pipeline-ml
+spec:
+  schedule: "*/5 * * * *"          # every 5 minutes
+  concurrencyPolicy: Forbid        # never run two drift jobs at once
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2              # if there's no traffic yet, fail fast; the
+                                   # next scheduled run will try again
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: drift
+              image: pipeline-ml-drift:dev
+              imagePullPolicy: IfNotPresent
+              args: ["python", "services/drift_job/drift_job.py", "--limit", "400"]
+              envFrom:
+                - configMapRef: { name: pipeline-config }   # PIPELINE_ARTIFACTS_DIR
+              env:
+                - name: PREDICTIONS_DB_URL
+                  valueFrom:
+                    secretKeyRef: { name: pipeline-secret, key: PREDICTIONS_DB_URL }
+              volumeMounts:
+                - name: baseline
+                  mountPath: /shared/artifacts
+          volumes:
+            - name: baseline
+              persistentVolumeClaim: { claimName: baseline }

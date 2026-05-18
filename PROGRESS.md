@@ -4,12 +4,13 @@ _Last updated: 2026-05-18_
 
 Legend: `[x]` done · `[~]` in progress / partial · `[ ]` not started
 
-**Overall:** Research + plan complete. **M0 committed; M1 fully built and
-verified** (train → serve → log → detect drift; STABLE vs DRIFT DETECTED both
-proven with real numbers). M1 runs the *identical* code in containers (Docker
-Compose: Postgres + MLflow server + one-shot train + inference + on-demand
-drift job) with every infra location injected via env vars — no hardcoding.
-M1 not yet committed. M2–M5 not started.
+**Overall:** Research + plan complete. **M0 + M1 committed; M2 fully built and
+verified** (train → serve → log → detect drift; STABLE vs DRIFT DETECTED proven
+with real numbers at every layer). M2 runs the *identical* M1 images on a real
+local Kubernetes cluster (k3d): Postgres + MLflow + a one-shot train Job +
+inference Deployment/Service + drift CronJob. Numbers are byte-identical across
+M0 (laptop) → M1 (Compose) → M2 (k8s). **M2 not yet committed.** M3–M5 not
+started.
 
 ---
 
@@ -75,12 +76,27 @@ M1 not yet committed. M2–M5 not started.
 - [x] DRIFT: 400 drifted `f0` → PSI **1.8285** SIGNIFICANT, f1–f7 STABLE (== M0)
 - [x] Predictions persisted in Postgres; baseline shared via a Docker volume
 
-## M2 — Local Kubernetes (k3d)
-- [ ] Install k3d (NOT currently installed)
-- [ ] Create k3d cluster
-- [ ] Manifests: namespace, Postgres, MLflow, inference Deployment
-- [ ] Drift job as a k8s `CronJob`
-- [ ] System runs on the local cluster
+## M2 — Local Kubernetes (k3d)  ✅ COMPLETE
+
+### Done
+- [x] k3d v5.8.3 installed (direct binary → `C:\Users\mobol\bin`, on user PATH)
+- [x] Cluster `pipeline-ml` created (k3s v1.31.5); kubeconfig repointed off the
+      broken `host.docker.internal` to `https://127.0.0.1:<port>`
+- [x] `deploy/k8s/`: 00-namespace, 10-config (ConfigMap + Secret), 20-postgres
+      (PVC+Deploy+Svc), 30-mlflow (PVC+Deploy+Svc), 40-train-job (Job + baseline
+      PVC), 50-inference (Deploy+Svc), 60-drift-cronjob (CronJob `*/5`)
+- [x] Ordering without `depends_on`: initContainers (wait-postgres, wait-mlflow,
+      wait-model) + readiness/liveness probes
+- [x] `k3d image import` of `pipeline-ml-inference:dev` + `pipeline-ml-drift:dev`
+      (local images, no registry); `imagePullPolicy: IfNotPresent`
+
+### Verification (2026-05-18, on the k3d cluster)
+- [x] `kubectl apply -f deploy/k8s/` → postgres/mlflow/inference 1/1, train Job
+      Completed (accuracy **0.9380**, `income-clf` v1 + `production` alias)
+- [x] `GET /health` via `kubectl port-forward` → `model_version` 1
+- [x] STABLE: 400 normal → CronJob-spawned Job → max PSI **0.0636** → stable
+- [x] DRIFT: 400 drifted `f0` → PSI **1.8285** SIGNIFICANT, f1–f7 STABLE
+- [x] Numbers byte-identical to M0 (laptop) and M1 (Compose)
 
 ## M3 — Lineage receipt
 - [x] Train-time tags: git SHA + dataset hash (done early in M0)
@@ -127,6 +143,17 @@ M1 not yet committed. M2–M5 not started.
    Fix: the Dockerfiles `mkdir`+`chown` `/mlartifacts` and `/shared/artifacts`
    before `USER appuser`; Docker copies that ownership when first initializing
    an empty named volume. Needed a one-time `down -v` to re-init old volumes.
+4. **k3d on Windows: kubectl can't reach the API — FIXED.** k3d wrote the
+   kubeconfig server as `https://host.docker.internal:54447`, which resolved to
+   an unreachable LAN IP. The API is actually published on `127.0.0.1:<port>`
+   (`docker port k3d-pipeline-ml-serverlb 6443/tcp`). Fix:
+   `kubectl config set-cluster k3d-pipeline-ml --server=https://127.0.0.1:<port>`
+   (k3d's TLS cert SANs include 127.0.0.1, so no TLS flag needed). Must be
+   redone if the cluster is recreated, or create with `--api-port 127.0.0.1:N`.
+5. **k8s probes vs MLflow host guard — AVOIDED BY DESIGN.** An HTTP probe's
+   Host header is the pod IP, which the DNS-rebinding guard would 403. The
+   mlflow Deployment uses a `tcpSocket` probe instead, keeping the guard strict
+   for real traffic while letting readiness/liveness pass.
 
 ## File inventory
 
@@ -141,23 +168,32 @@ ml/train.py          ml/baseline.py        ml/drift_metrics.py
 services/inference/app.py        services/inference/Dockerfile
 services/drift_job/drift_job.py  services/drift_job/Dockerfile
 deploy/docker-compose.yml
+deploy/k8s/  (00-namespace 10-config 20-postgres 30-mlflow
+              40-train-job 50-inference 60-drift-cronjob).yaml
 scripts/inject_drift.py
 ```
 Local (gitignored) state: `.venv/`, `.claude/`, `mlflow.db`, `mlartifacts/`,
-`predictions.db`, `artifacts/baseline.npz`. Docker (M1) state lives in named
-volumes: `deploy_pgdata`, `deploy_mlartifacts`, `deploy_baseline`.
+`predictions.db`, `artifacts/baseline.npz`. Docker (M1) state = named volumes
+`deploy_pgdata`/`deploy_mlartifacts`/`deploy_baseline`. K8s (M2) state =
+PVCs in the `pipeline-ml` namespace; k3d binary at `C:\Users\mobol\bin`.
 
 ## How to resume
 
-M0 is committed to `master`. **M1 is built and verified but NOT yet committed.**
-The stack is brought down after verification (`docker compose -f
-deploy/docker-compose.yml down`) — no server left running.
+M0 + M1 are committed to `master`. **M2 is built and verified but NOT yet
+committed.** After verification the host port-forward is stopped; the k3d
+cluster is left created (use `k3d cluster stop pipeline-ml` to free resources,
+`k3d cluster start pipeline-ml` to resume).
 
-- Re-demo M0 locally (no Docker): README "M0 quickstart".
-- Re-demo M1 (containers): README "M1 quickstart" — one `docker compose up`.
+- Re-demo M0 (no Docker): README "M0 quickstart".
+- Re-demo M1 (containers): README "M1 quickstart".
+- Re-demo M2 (k8s): README "M2 quickstart". If kubectl can't reach the API
+  after `k3d cluster start`, re-apply resolved-issue #4 (repoint kubeconfig).
 
-**Next milestone: M2 — Local Kubernetes (k3d).** k3d is NOT yet installed
-(install it first). Reuse the M1 images: inference becomes a Deployment +
-Service, the drift job a Kubernetes `CronJob`, with Postgres + the MLflow
-server as in-cluster workloads. Explain k3d / pods / Deployments / Services /
-CronJobs in plain language before wiring them.
+**Next milestone: M3 — Lineage receipt.** Train-time tags (git SHA + dataset
+hash) and per-prediction `model_version`/`run_id` already exist. Build
+`GET /lineage/{prediction_id}` in the inference service that joins the
+prediction log → MLflow run → params/SHA/data hash, so any prediction yields a
+full provenance receipt. Explain "lineage / provenance" in plain language
+before wiring it. (Note: train-time `git_sha=unknown` in containers because
+`.git` is excluded by `.dockerignore` — M3 should pass the SHA in as an env
+var / build arg so the receipt is complete.)
