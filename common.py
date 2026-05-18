@@ -7,6 +7,7 @@ failure) inside our own project.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from functools import lru_cache
 from pathlib import Path
@@ -16,15 +17,40 @@ from sklearn.datasets import make_classification
 
 # --- Paths (CWD-independent) -------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parent
-ARTIFACTS_DIR = REPO_ROOT / "artifacts"
+
+# --- Config: env var wins, local default preserves M0 behavior ---------------
+# Every infrastructure location is read from an environment variable. With NO
+# env vars set this is byte-for-byte the old M0 setup (local SQLite files), so
+# `python ml/train.py` still works on a bare laptop. Docker Compose sets these
+# vars to point the SAME code at Postgres + a real MLflow server instead.
+# Nothing about *where data lives* is hardcoded anymore.
+
+# Drift baseline lives here. In containers this is a shared volume so the
+# train job and the drift job see the same file.
+ARTIFACTS_DIR = Path(os.environ.get("PIPELINE_ARTIFACTS_DIR",
+                                    str(REPO_ROOT / "artifacts")))
 BASELINE_PATH = ARTIFACTS_DIR / "baseline.npz"
+
+# Prediction log. A SQLAlchemy URL so the SAME code targets either a local
+# SQLite file or the shared Postgres service (sqlite:/// vs postgresql://).
+PREDICTIONS_DB_URL = os.environ.get(
+    "PREDICTIONS_DB_URL",
+    f"sqlite:///{(REPO_ROOT / 'predictions.db').as_posix()}",
+)
+# Back-compat: some M0 code/docs still refer to the raw SQLite file path.
 PRED_DB = REPO_ROOT / "predictions.db"
 
-# MLflow tracking + registry live in a local SQLite file (no server needed).
-# SQLite needs the Model Registry, which the plain file:// store does not support.
-MLFLOW_TRACKING_URI = f"sqlite:///{REPO_ROOT.as_posix()}/mlflow.db"
-MLFLOW_ARTIFACT_ROOT = (REPO_ROOT / "mlartifacts").as_uri()
-MLFLOW_EXPERIMENT = "pipeline-ml"
+# MLflow tracking + registry. Local default = the M0 SQLite file (no server
+# needed). Compose overrides this with http://mlflow:5000 (a real server).
+MLFLOW_TRACKING_URI = os.environ.get(
+    "MLFLOW_TRACKING_URI",
+    f"sqlite:///{REPO_ROOT.as_posix()}/mlflow.db",
+)
+MLFLOW_ARTIFACT_ROOT = os.environ.get(
+    "MLFLOW_ARTIFACT_ROOT",
+    (REPO_ROOT / "mlartifacts").as_uri(),
+)
+MLFLOW_EXPERIMENT = os.environ.get("MLFLOW_EXPERIMENT", "pipeline-ml")
 
 # --- Model / data contract ---------------------------------------------------
 MODEL_NAME = "income-clf"

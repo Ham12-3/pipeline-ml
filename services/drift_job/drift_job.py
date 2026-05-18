@@ -10,29 +10,24 @@ Run from repo root:  python services/drift_job/drift_job.py --limit 1000
 from __future__ import annotations
 
 import argparse
-import json
-import sqlite3
 import sys
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root on path
-from common import FEATURE_NAMES, PRED_DB  # noqa: E402
+from common import FEATURE_NAMES  # noqa: E402
+from db import init_db, recent_feature_rows  # noqa: E402
 from ml.baseline import load_baseline  # noqa: E402
 from ml.drift_metrics import feature_drift_report  # noqa: E402
 
 
 def recent_features(limit: int) -> np.ndarray:
-    if not PRED_DB.exists():
-        raise FileNotFoundError(f"{PRED_DB} not found -- send some /predict traffic first.")
-    with sqlite3.connect(PRED_DB) as con:
-        rows = con.execute(
-            "SELECT features FROM predictions ORDER BY ts DESC LIMIT ?", (limit,)
-        ).fetchall()
+    init_db()  # ensure the table exists even if the job runs before any traffic
+    rows = recent_feature_rows(limit)
     if not rows:
-        raise SystemExit("No predictions logged yet.")
-    return np.array([json.loads(r[0]) for r in rows], dtype=float)
+        raise SystemExit("No predictions logged yet -- send some /predict traffic first.")
+    return np.array(rows, dtype=float)
 
 
 def main() -> None:

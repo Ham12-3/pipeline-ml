@@ -7,3 +7,6 @@ pandas>=2.2
 numpy>=1.26
 scipy>=1.13
 requests>=2.32
+# M1: one prediction-store code path for SQLite (local) and Postgres (containers)
+sqlalchemy>=2.0
+psycopg2-binary>=2.9

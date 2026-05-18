@@ -9,12 +9,9 @@ Run from repo root:  python -m uvicorn services.inference.app:app --port 8000
 """
 from __future__ import annotations
 
-import json
-import sqlite3
 import sys
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 
 import mlflow
@@ -28,24 +25,10 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root on path
 from common import (  # noqa: E402
     FEATURE_NAMES, MLFLOW_TRACKING_URI, MODEL_ALIAS, MODEL_NAME, N_FEATURES,
-    PRED_DB,
 )
+from db import init_db, log_prediction  # noqa: E402
 
 STATE: dict = {}
-
-
-def init_db() -> None:
-    with sqlite3.connect(PRED_DB) as con:
-        con.execute(
-            """CREATE TABLE IF NOT EXISTS predictions (
-                   prediction_id TEXT PRIMARY KEY,
-                   ts            TEXT NOT NULL,
-                   model_version TEXT NOT NULL,
-                   run_id        TEXT NOT NULL,
-                   features      TEXT NOT NULL,
-                   prediction    INTEGER NOT NULL,
-                   proba         REAL NOT NULL)"""
-        )
 
 
 @asynccontextmanager
@@ -90,13 +73,14 @@ def predict(req: PredictRequest):
     proba = float(np.max(model.predict_proba(X)[0]))
 
     prediction_id = str(uuid.uuid4())
-    ts = datetime.now(timezone.utc).isoformat()
-    with sqlite3.connect(PRED_DB) as con:
-        con.execute(
-            "INSERT INTO predictions VALUES (?,?,?,?,?,?,?)",
-            (prediction_id, ts, str(STATE["model_version"]), STATE["run_id"],
-             json.dumps(req.features), pred, proba),
-        )
+    log_prediction(
+        prediction_id=prediction_id,
+        model_version=STATE["model_version"],
+        run_id=STATE["run_id"],
+        features=req.features,
+        prediction=pred,
+        proba=proba,
+    )
 
     return {
         "prediction_id": prediction_id,

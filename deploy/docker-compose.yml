@@ -1,0 +1,127 @@
+# pipeline-ml — full system in one command.
+#
+#   docker compose -f deploy/docker-compose.yml up --build
+#
+# What comes up, and in what order (Compose waits on the healthchecks):
+#   postgres  ->  mlflow (server)  ->  train (one-shot)  ->  inference (API)
+# Then, on demand (after the stack is up), you run the drift job:
+#   docker compose -f deploy/docker-compose.yml run --rm drift
+#
+# Key idea: services talk to each other by SERVICE NAME on a private network
+# Compose creates. "postgres" and "mlflow" below are hostnames inside that
+# network — that is why common.py reads them from env vars instead of
+# hardcoding localhost.
+
+services:
+  # --- Shared database -------------------------------------------------------
+  # Holds BOTH the prediction log (our `predictions` table) and MLflow's own
+  # bookkeeping tables. They never collide (different table names), so one
+  # Postgres + one database is enough at this scale.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: pipeline
+      POSTGRES_PASSWORD: pipeline
+      POSTGRES_DB: pipeline
+    volumes:
+      - pgdata:/var/lib/postgresql/data        # data survives `down`/restart
+    healthcheck:
+      # "is Postgres actually ready to accept queries?" — not just "started"
+      test: ["CMD-SHELL", "pg_isready -U pipeline -d pipeline"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- MLflow tracking + model registry server -------------------------------
+  # Reuses the inference image (it already has mlflow + the Postgres driver
+  # installed) but runs a different command. One environment, many roles.
+  mlflow:
+    image: pipeline-ml-inference:dev
+    command: >
+      mlflow server
+      --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql://pipeline:pipeline@postgres:5432/pipeline
+      --artifacts-destination /mlartifacts
+      --serve-artifacts
+    environment:
+      # MLflow 3.x rejects requests whose Host header isn't allow-listed
+      # (DNS-rebinding protection). Setting this REPLACES the built-in
+      # localhost defaults, so we re-list localhost for the healthcheck plus
+      # the `mlflow` service name other containers connect with.
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:*,localhost:*,127.0.0.1:*"
+    volumes:
+      - mlartifacts:/mlartifacts               # model files live here
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # --- One-shot training job -------------------------------------------------
+  # Runs `python ml/train.py` once, then exits (restart: "no"). It trains the
+  # model, registers it + sets the `production` alias in the MLflow server, and
+  # writes the drift baseline to the shared volume. `inference` waits for this
+  # to finish SUCCESSFULLY before it starts.
+  train:
+    image: pipeline-ml-inference:dev
+    command: ["python", "ml/train.py"]
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_ARTIFACT_ROOT: mlflow-artifacts:/   # store via the server, not a local file
+      PREDICTIONS_DB_URL: postgresql+psycopg2://pipeline:pipeline@postgres:5432/pipeline
+      PIPELINE_ARTIFACTS_DIR: /shared/artifacts
+    volumes:
+      - baseline:/shared/artifacts               # baseline.npz written here
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    restart: "no"
+
+  # --- Inference API ---------------------------------------------------------
+  inference:
+    image: pipeline-ml-inference:dev
+    build:
+      context: ..                                # build context = repo root
+      dockerfile: services/inference/Dockerfile
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      PREDICTIONS_DB_URL: postgresql+psycopg2://pipeline:pipeline@postgres:5432/pipeline
+    ports:
+      - "8000:8000"                              # reachable on the host at :8000
+    depends_on:
+      train:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # --- Drift job (run on demand, after sending traffic) ----------------------
+  # Not started by `up` (it would find no predictions yet). Run it with:
+  #   docker compose -f deploy/docker-compose.yml run --rm drift
+  drift:
+    build:
+      context: ..
+      dockerfile: services/drift_job/Dockerfile
+    environment:
+      PREDICTIONS_DB_URL: postgresql+psycopg2://pipeline:pipeline@postgres:5432/pipeline
+      PIPELINE_ARTIFACTS_DIR: /shared/artifacts
+    volumes:
+      - baseline:/shared/artifacts               # reads the SAME baseline train wrote
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ["jobs"]                           # excluded from a plain `up`
+
+volumes:
+  pgdata:
+  mlartifacts:
+  baseline:

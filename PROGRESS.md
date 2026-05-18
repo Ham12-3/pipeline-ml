@@ -4,10 +4,12 @@ _Last updated: 2026-05-18_
 
 Legend: `[x]` done · `[~]` in progress / partial · `[ ]` not started
 
-**Overall:** Research + plan complete. **M0 fully built, verified, and committed**
-(train → serve → log → detect drift; STABLE vs DRIFT DETECTED both proven with
-real numbers). Code consolidated from the scratch worktree into the repo root.
-M1–M5 not started.
+**Overall:** Research + plan complete. **M0 committed; M1 fully built and
+verified** (train → serve → log → detect drift; STABLE vs DRIFT DETECTED both
+proven with real numbers). M1 runs the *identical* code in containers (Docker
+Compose: Postgres + MLflow server + one-shot train + inference + on-demand
+drift job) with every infra location injected via env vars — no hardcoding.
+M1 not yet committed. M2–M5 not started.
 
 ---
 
@@ -48,10 +50,30 @@ M1–M5 not started.
       all other features STABLE (proves the detector is specific, not noisy)
 - [x] **Drift false-positive bug RESOLVED** (see Resolved issues below)
 
-## M1 — Containerize
-- [ ] Dockerfile per service (inference, drift_job)
-- [ ] `deploy/docker-compose.yml` (inference + MLflow + Postgres + drift job)
-- [ ] `docker-compose up` brings the whole system up with one command
+## M1 — Containerize  ✅ COMPLETE
+
+### Code written
+- [x] `.dockerignore` (keeps venv/local state out of the build context)
+- [x] `common.py` config now env-driven: `PREDICTIONS_DB_URL`,
+      `MLFLOW_TRACKING_URI`, `MLFLOW_ARTIFACT_ROOT`, `PIPELINE_ARTIFACTS_DIR`
+      — local SQLite remains the default when no env vars are set
+- [x] `db.py` — SQLAlchemy prediction store; ONE code path for SQLite (local)
+      and Postgres (containers). `app.py` + `drift_job.py` refactored onto it
+- [x] `services/inference/Dockerfile`, `services/drift_job/Dockerfile`
+- [x] `deploy/docker-compose.yml` (postgres → mlflow server → train one-shot →
+      inference; drift job under a `jobs` profile, run on demand)
+- [x] `requirements.txt` += `sqlalchemy`, `psycopg2-binary`
+- [x] README M1 one-command quickstart
+
+### Verification (2026-05-18, fully containerized)
+- [x] `docker compose -f deploy/docker-compose.yml up -d --build` brings the
+      stack up; postgres + mlflow + inference healthy; `train` exits 0
+- [x] Train in-container: accuracy **0.9380** (== M0); `income-clf` v1
+      registered + `production` alias set IN the MLflow server (Postgres-backed)
+- [x] `GET /health` on containerized API → `model_version` 1 from the registry
+- [x] STABLE: 400 normal → max PSI **0.0636** → stable (== M0)
+- [x] DRIFT: 400 drifted `f0` → PSI **1.8285** SIGNIFICANT, f1–f7 STABLE (== M0)
+- [x] Predictions persisted in Postgres; baseline shared via a Docker volume
 
 ## M2 — Local Kubernetes (k3d)
 - [ ] Install k3d (NOT currently installed)
@@ -95,32 +117,47 @@ M1–M5 not started.
    Proof: normal → max PSI 0.0636 (STABLE); drifted f0 → PSI 1.83 (SIGNIFICANT),
    f1–f7 unchanged.
 
+2. **MLflow 3.x "Invalid Host header" 403 (blocked M1 train) — FIXED.**
+   MLflow 3.x adds DNS-rebinding protection; the server rejected client
+   requests with Host `mlflow:5000`. `MLFLOW_SERVER_ALLOWED_HOSTS` *replaces*
+   the built-in localhost defaults, so the Compose value re-lists them too:
+   `mlflow:*,localhost:*,127.0.0.1:*` (last two for the server's healthcheck).
+3. **Artifact upload 500 — `PermissionError: /mlartifacts` — FIXED.** Images
+   run as non-root `appuser`, but a fresh Docker named volume is root-owned.
+   Fix: the Dockerfiles `mkdir`+`chown` `/mlartifacts` and `/shared/artifacts`
+   before `USER appuser`; Docker copies that ownership when first initializing
+   an empty named volume. Needed a one-time `down -v` to re-init old volumes.
+
 ## File inventory
 
 ```
 docs/ml-pipeline-reliability-platform.md
-common.py
-.gitignore
+common.py            db.py
+.gitignore           .dockerignore
 requirements.txt
 README.md
 PROGRESS.md
-ml/train.py        ml/baseline.py        ml/drift_metrics.py
-services/inference/app.py
-services/drift_job/drift_job.py
+ml/train.py          ml/baseline.py        ml/drift_metrics.py
+services/inference/app.py        services/inference/Dockerfile
+services/drift_job/drift_job.py  services/drift_job/Dockerfile
+deploy/docker-compose.yml
 scripts/inject_drift.py
 ```
 Local (gitignored) state: `.venv/`, `.claude/`, `mlflow.db`, `mlartifacts/`,
-`predictions.db`, `artifacts/baseline.npz`
+`predictions.db`, `artifacts/baseline.npz`. Docker (M1) state lives in named
+volumes: `deploy_pgdata`, `deploy_mlartifacts`, `deploy_baseline`.
 
 ## How to resume
 
-M0 is complete, verified, and committed to `master`. No server should be left
-running (the M0 dev server is stopped after each verification).
+M0 is committed to `master`. **M1 is built and verified but NOT yet committed.**
+The stack is brought down after verification (`docker compose -f
+deploy/docker-compose.yml down`) — no server left running.
 
-To re-demo M0 locally, follow the README quickstart (train → serve → inject
-normal/drift → drift job).
+- Re-demo M0 locally (no Docker): README "M0 quickstart".
+- Re-demo M1 (containers): README "M1 quickstart" — one `docker compose up`.
 
-**Next milestone: M1 — Containerize.** Write a Dockerfile per service and a
-`deploy/docker-compose.yml` so `docker-compose up` brings up inference + MLflow
-+ the drift job together. Docker 28.1.1 is already available; explain the
-container/compose concepts in plain language before wiring them.
+**Next milestone: M2 — Local Kubernetes (k3d).** k3d is NOT yet installed
+(install it first). Reuse the M1 images: inference becomes a Deployment +
+Service, the drift job a Kubernetes `CronJob`, with Postgres + the MLflow
+server as in-cluster workloads. Explain k3d / pods / Deployments / Services /
+CronJobs in plain language before wiring them.

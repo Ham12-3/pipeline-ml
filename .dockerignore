@@ -1,0 +1,12 @@
+# Don't ship local state or tooling into images.
+.venv/
+.claude/
+.git/
+__pycache__/
+*.pyc
+# Local M0 state (each container makes its own / uses Postgres+MLflow service)
+mlflow.db
+mlartifacts/
+mlruns/
+predictions.db
+artifacts/
