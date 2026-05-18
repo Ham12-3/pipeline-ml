@@ -74,6 +74,9 @@ services:
       MLFLOW_ARTIFACT_ROOT: mlflow-artifacts:/   # store via the server, not a local file
       PREDICTIONS_DB_URL: postgresql+psycopg2://pipeline:pipeline@postgres:5432/pipeline
       PIPELINE_ARTIFACTS_DIR: /shared/artifacts
+      # Lineage: images exclude .git, so pass the commit in. Run e.g.
+      #   GIT_SHA=$(git rev-parse --short HEAD) docker compose ... up
+      GIT_SHA: "${GIT_SHA:-unknown}"
     volumes:
       - baseline:/shared/artifacts               # baseline.npz written here
     depends_on:

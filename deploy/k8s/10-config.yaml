@@ -14,6 +14,11 @@ data:
   MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow:*,localhost:*,127.0.0.1:*"
   POSTGRES_USER: "pipeline"
   POSTGRES_DB: "pipeline"
+  # Lineage commit. Override per-deploy so the receipt is real, e.g.:
+  #   kubectl create configmap pipeline-config -n pipeline-ml \
+  #     --from-literal=GIT_SHA=$(git rev-parse --short HEAD) ... -o yaml | kubectl apply -f -
+  # (or template it in). Left "unknown" here on purpose — never a stale SHA.
+  GIT_SHA: "unknown"
 ---
 # Secrets hold credentials. In a real cluster these would come from a secret
 # manager; for a local learning cluster, plain values in a Secret object

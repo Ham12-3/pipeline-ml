@@ -15,7 +15,7 @@ and automatically rolls back bad model releases (closed loop).
 | M0 | ML logic, no infra: train → serve → log → detect drift | ✅ |
 | M1 | Containerize (Docker + docker-compose) | ✅ |
 | M2 | Local Kubernetes (k3d) | ✅ |
-| M3 | Lineage receipt API | ⏳ |
+| M3 | Lineage receipt API | ✅ |
 | M4 | Closed loop (Argo Rollouts auto-rollback) | ⏳ |
 | M5 | Dashboards & polish (Grafana, Streamlit) | ⏳ |
 
@@ -127,3 +127,45 @@ cluster. Inference is a self-healing **Deployment + Service**, training is a
 run-once **Job**, and the drift check is an automatic **CronJob** (every 5
 min) — yet the verified numbers are still identical (train accuracy 0.9380;
 normal → max PSI 0.0636 stable; drifted `f0` → PSI 1.8285 SIGNIFICANT).
+
+## M3 — lineage receipt
+
+Every prediction can be traced back to exactly how its model was made.
+`GET /lineage/{prediction_id}` joins the prediction log → the MLflow run that
+produced that model version → its params, accuracy, git commit, and dataset
+fingerprint.
+
+```bash
+# (model trained + server running, e.g. via the M0/M1/M2 quickstart)
+PID=$(curl -s -X POST http://127.0.0.1:8000/predict \
+        -H 'Content-Type: application/json' \
+        -d '{"features":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8]}' | jq -r .prediction_id)
+curl -s http://127.0.0.1:8000/lineage/$PID | jq
+```
+
+Example receipt:
+
+```json
+{
+  "prediction": {
+    "prediction_id": "20c13653-…", "ts": "2026-05-18T19:28:39Z",
+    "model": "income-clf", "model_version": "2",
+    "features": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+    "prediction": 1, "proba": 0.6116
+  },
+  "model_lineage": {
+    "run_id": "31a93b9a…", "status": "FINISHED",
+    "params": {"n_estimators": "120", "max_depth": "8", "n_samples": "6000"},
+    "metrics": {"accuracy": 0.938, "f1": 0.9373},
+    "git_sha": "d698f22", "dataset_hash": "cce02db9b4e9a5a7"
+  }
+}
+```
+
+The training git commit reaches the receipt via a `GIT_SHA` env var (images
+exclude `.git`), e.g. `GIT_SHA=$(git rev-parse --short HEAD) docker compose
+... up`; unknown ids return **404**.
+
+**What M3 proves:** the system is auditable — any single prediction yields a
+full, honest provenance receipt (model version + training params + accuracy +
+code commit + data fingerprint), the foundation for the M4 closed loop.

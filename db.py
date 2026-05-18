@@ -75,3 +75,13 @@ def recent_feature_rows(limit: int) -> list[list[float]]:
             .limit(limit)
         ).fetchall()
     return [json.loads(r[0]) for r in rows]
+
+
+def get_prediction(prediction_id: str) -> dict | None:
+    """One logged prediction by id (the 'serving' half of a lineage receipt)."""
+    with engine().connect() as con:
+        row = con.execute(
+            select(predictions).where(
+                predictions.c.prediction_id == prediction_id)
+        ).mappings().first()
+    return dict(row) if row else None

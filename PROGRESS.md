@@ -4,13 +4,12 @@ _Last updated: 2026-05-18_
 
 Legend: `[x]` done · `[~]` in progress / partial · `[ ]` not started
 
-**Overall:** Research + plan complete. **M0 + M1 committed; M2 fully built and
-verified** (train → serve → log → detect drift; STABLE vs DRIFT DETECTED proven
-with real numbers at every layer). M2 runs the *identical* M1 images on a real
-local Kubernetes cluster (k3d): Postgres + MLflow + a one-shot train Job +
-inference Deployment/Service + drift CronJob. Numbers are byte-identical across
-M0 (laptop) → M1 (Compose) → M2 (k8s). **M2 not yet committed.** M3–M5 not
-started.
+**Overall:** Research + plan complete. **M0 + M1 + M2 committed; M3 fully built
+and verified.** Drift behaviour is byte-identical across M0 (laptop) → M1
+(Compose) → M2 (k3d Kubernetes). M3 adds the lineage receipt:
+`GET /lineage/{prediction_id}` returns full provenance (model version +
+training params + accuracy + git commit + dataset fingerprint). **M3 not yet
+committed.** M4–M5 not started.
 
 ---
 
@@ -98,11 +97,26 @@ started.
 - [x] DRIFT: 400 drifted `f0` → PSI **1.8285** SIGNIFICANT, f1–f7 STABLE
 - [x] Numbers byte-identical to M0 (laptop) and M1 (Compose)
 
-## M3 — Lineage receipt
+## M3 — Lineage receipt  ✅ COMPLETE
 - [x] Train-time tags: git SHA + dataset hash (done early in M0)
 - [x] Inference stamps `model_version` + `run_id` on every logged prediction
-- [ ] `GET /lineage/{prediction_id}` joining prediction log → MLflow run → params/SHA/data hash
-- [ ] Any prediction → full provenance receipt
+- [x] `lineage.py`: `run_provenance(run_id)` → params/metrics/git_sha/dataset_hash
+      from MLflow; `db.get_prediction(id)` → the logged serving row
+- [x] `GET /lineage/{prediction_id}` joins them into one receipt; 404 on
+      unknown id
+- [x] `common.git_sha()` prefers `GIT_SHA` env var (images exclude `.git`);
+      injected in `docker-compose.yml` train + the k8s ConfigMap
+- [x] Verified locally: predict → receipt shows real model v2, run_id,
+      accuracy 0.938, **git_sha d698f22** (not "unknown"), dataset_hash;
+      bogus id → 404
+
+### Known caveat (honest)
+`dataset_hash` is environment-sensitive: local venv (sklearn 1.8.0) →
+`cce02db9…`, container image (sklearn resolved at build) → `43616cb6…`.
+`make_classification` output bytes differ across library versions, so the
+fingerprint differs even though the data is statistically identical. The
+receipt faithfully reports whatever was recorded at train time — but pin
+sklearn/numpy if a *cross-environment* identical hash is ever needed.
 
 ## M4 — The closed loop
 - [ ] Install Argo Rollouts
@@ -159,7 +173,7 @@ started.
 
 ```
 docs/ml-pipeline-reliability-platform.md
-common.py            db.py
+common.py            db.py            lineage.py
 .gitignore           .dockerignore
 requirements.txt
 README.md
@@ -179,21 +193,19 @@ PVCs in the `pipeline-ml` namespace; k3d binary at `C:\Users\mobol\bin`.
 
 ## How to resume
 
-M0 + M1 are committed to `master`. **M2 is built and verified but NOT yet
-committed.** After verification the host port-forward is stopped; the k3d
-cluster is left created (use `k3d cluster stop pipeline-ml` to free resources,
-`k3d cluster start pipeline-ml` to resume).
+M0 + M1 + M2 are committed to `master`. **M3 is built and verified but NOT yet
+committed.** k3d cluster is stopped (`k3d cluster start pipeline-ml` to resume;
+re-apply resolved-issue #4 if kubectl can't reach the API after start).
 
 - Re-demo M0 (no Docker): README "M0 quickstart".
 - Re-demo M1 (containers): README "M1 quickstart".
-- Re-demo M2 (k8s): README "M2 quickstart". If kubectl can't reach the API
-  after `k3d cluster start`, re-apply resolved-issue #4 (repoint kubeconfig).
+- Re-demo M2 (k8s): README "M2 quickstart".
+- Re-demo M3 (lineage): train + serve (any layer), POST /predict, then
+  GET /lineage/{id} — see README "M3 — lineage receipt".
 
-**Next milestone: M3 — Lineage receipt.** Train-time tags (git SHA + dataset
-hash) and per-prediction `model_version`/`run_id` already exist. Build
-`GET /lineage/{prediction_id}` in the inference service that joins the
-prediction log → MLflow run → params/SHA/data hash, so any prediction yields a
-full provenance receipt. Explain "lineage / provenance" in plain language
-before wiring it. (Note: train-time `git_sha=unknown` in containers because
-`.git` is excluded by `.dockerignore` — M3 should pass the SHA in as an env
-var / build arg so the receipt is complete.)
+**Next milestone: M4 — The closed loop.** Install Argo Rollouts; run inference
+as a `Rollout` with a canary strategy; have the drift job push drift +
+canary-quality gauges to Prometheus/Pushgateway; wire an `AnalysisTemplate`
+with abort thresholds; prove a deliberately-bad model auto-rolls-back. This is
+the milestone that needs the M2 k8s cluster running. Explain Argo Rollouts /
+canary / Prometheus / automated analysis in plain language before wiring them.

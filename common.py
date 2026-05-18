@@ -114,7 +114,15 @@ def apply_drift(X: np.ndarray, feature_index: int = 0,
 
 
 def git_sha() -> str:
-    """Best-effort short git SHA of the current commit (for lineage)."""
+    """Short git SHA of the commit that produced this code (for lineage).
+
+    Prefers the GIT_SHA env var — images exclude `.git` (see .dockerignore),
+    so Compose/k8s inject the SHA this way. Falls back to asking git directly
+    for local dev, then "unknown" if even that fails.
+    """
+    env = os.environ.get("GIT_SHA")
+    if env:
+        return env
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],

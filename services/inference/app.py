@@ -2,13 +2,15 @@
 
 - Loads the model the registry currently aliases as `production`.
 - POST /predict returns a prediction AND logs the request (features, prediction,
-  model version, run id) to a SQLite "prediction log" -- the raw material the
-  drift job and (later) the lineage receipt are built from.
+  model version, run id) -- the raw material the drift job and the lineage
+  receipt are built from.
+- GET /lineage/{prediction_id} returns the full provenance receipt.
 
 Run from repo root:  python -m uvicorn services.inference.app:app --port 8000
 """
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -26,7 +28,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root on pat
 from common import (  # noqa: E402
     FEATURE_NAMES, MLFLOW_TRACKING_URI, MODEL_ALIAS, MODEL_NAME, N_FEATURES,
 )
-from db import init_db, log_prediction  # noqa: E402
+from db import get_prediction, init_db, log_prediction  # noqa: E402
+from lineage import run_provenance  # noqa: E402
 
 STATE: dict = {}
 
@@ -87,4 +90,32 @@ def predict(req: PredictRequest):
         "prediction": pred,
         "proba": proba,
         "model_version": STATE["model_version"],
+    }
+
+
+@app.get("/lineage/{prediction_id}")
+def lineage(prediction_id: str):
+    """Full provenance receipt for one prediction: the served request joined
+    to the model version that produced it, joined to how that model was
+    trained (params, accuracy, git SHA, dataset fingerprint).
+    """
+    pred = get_prediction(prediction_id)
+    if pred is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown prediction_id {prediction_id}",
+        )
+    provenance = run_provenance(pred["run_id"])
+    return {
+        "prediction": {
+            "prediction_id": pred["prediction_id"],
+            "ts": pred["ts"],
+            "model": MODEL_NAME,
+            "model_version": pred["model_version"],
+            "features": json.loads(pred["features"]),
+            "prediction": pred["prediction"],
+            "proba": pred["proba"],
+        },
+        "model_lineage": provenance
+        or {"error": f"MLflow run {pred['run_id']} not found"},
     }
