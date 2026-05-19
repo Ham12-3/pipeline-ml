@@ -1,0 +1,31 @@
+Name:            inference
+Namespace:       pipeline-ml
+Status:          ✖ Degraded
+Message:         RolloutAborted: Rollout aborted update to revision 5: Step-based analysis phase error/failed: Metric "holdout-accuracy" assessed Failed due to failed (2) > failureLimit (1)
+Strategy:        Canary
+  Step:          0/3
+  SetWeight:     0
+  ActualWeight:  0
+Images:          pipeline-ml-inference:dev (stable)
+Replicas:
+  Desired:       2
+  Current:       2
+  Updated:       0
+  Ready:         2
+  Available:     2
+
+NAME                                   KIND         STATUS        AGE    INFO
+⟳ inference                            Rollout      ✖ Degraded    13h    
+├──# revision:5                                                          
+│  ├──⧉ inference-cd464759d            ReplicaSet   • ScaledDown  2m56s  canary
+│  └──α inference-cd464759d-5-1        AnalysisRun  ✖ Failed      2m40s  ✔ 1,✖ 2
+├──# revision:4                                                          
+│  ├──⧉ inference-6b5b67999b           ReplicaSet   ✔ Healthy     24m    stable
+│  │  ├──□ inference-6b5b67999b-5l7x8  Pod          ✔ Running     24m    ready:1/1
+│  │  └──□ inference-6b5b67999b-blqkg  Pod          ✔ Running     23m    ready:1/1
+│  └──α inference-6b5b67999b-4-1       AnalysisRun  ✔ Successful  24m    ✔ 5
+├──# revision:3                                                          
+│  └──⧉ inference-59ff76bd95           ReplicaSet   • ScaledDown  13h    
+└──# revision:2                                                          
+   ├──⧉ inference-77b79cc657           ReplicaSet   • ScaledDown  13h    
+   └──α inference-77b79cc657-2-1       AnalysisRun  ⚠ Error       13h    ⚠ 5

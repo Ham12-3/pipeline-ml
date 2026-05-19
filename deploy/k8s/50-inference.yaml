@@ -1,49 +1,111 @@
-# The inference API. A Deployment keeps it running and self-healing: if the
-# pod dies, Kubernetes makes a new one automatically.
-apiVersion: apps/v1
-kind: Deployment
+# Which model version this release serves. Bumping MODEL_VERSION here + the
+# pod-template `release` annotation on the Rollout = a new model release,
+# which Argo Rollouts puts through the canary + analysis below.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-release
+  namespace: pipeline-ml
+data:
+  MODEL_VERSION: "2"
+---
+# The food-taster's verdict. During the canary, Argo runs this analysis: it
+# asks Prometheus for the WORST holdout accuracy across all inference pods
+# (so a bad canary pod drags it down) and fails if it's below 0.7. A failed
+# analysis makes the Rollout auto-abort = automatic rollback to the previous
+# model.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: model-quality
+  namespace: pipeline-ml
+spec:
+  metrics:
+    - name: holdout-accuracy
+      interval: 10s
+      count: 5
+      successCondition: "len(result) > 0 && result[0] >= 0.7"
+      failureLimit: 1
+      provider:
+        prometheus:
+          # FQDN required: the Argo Rollouts controller runs in the
+          # argo-rollouts namespace and resolves this from there, so a bare
+          # "prometheus" would look up the wrong namespace and fail.
+          address: http://prometheus.pipeline-ml.svc.cluster.local:9090
+          query: min(model_holdout_accuracy)
+---
+# A Rollout is a drop-in replacement for a Deployment that adds progressive
+# delivery. On every model release it runs: 25% canary -> analysis -> 100%.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: inference
   namespace: pipeline-ml
 spec:
-  replicas: 1
+  replicas: 1                       # M5: trimmed 2->1 to fit Grafana+Streamlit
+                                    # on the 3.83 GiB laptop VM (canary proven
+                                    # in M4; M5 doesn't exercise it). See
+                                    # resolved-issue #10.
   selector:
     matchLabels: { app: inference }
+  strategy:
+    canary:
+      steps:
+        - setWeight: 25
+        - analysis:
+            templates:
+              - templateName: model-quality
+        - setWeight: 100
   template:
     metadata:
       labels: { app: inference }
+      annotations:
+        pipeline-ml/release: "3"    # bump this (with MODEL_VERSION) per release
     spec:
-      # Don't start serving until the model actually exists in the registry
-      # (i.e. the train Job has finished). Reuses the app image + contract so
-      # there are no duplicated literals here.
       initContainers:
         - name: wait-model
           image: pipeline-ml-inference:dev
           imagePullPolicy: IfNotPresent
           envFrom:
-            - configMapRef: { name: pipeline-config }   # MLFLOW_TRACKING_URI
-          command: ["sh", "-c", "until python -c \"import mlflow; from mlflow.tracking import MlflowClient; from common import MLFLOW_TRACKING_URI, MODEL_NAME, MODEL_ALIAS; mlflow.set_tracking_uri(MLFLOW_TRACKING_URI); MlflowClient().get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)\"; do echo 'waiting for registered model'; sleep 4; done"]
+            - configMapRef: { name: pipeline-config }
+            - configMapRef: { name: model-release }
+          command: ["sh", "-c", "until python -c \"import os, mlflow; from mlflow.tracking import MlflowClient; from common import MLFLOW_TRACKING_URI, MODEL_NAME; mlflow.set_tracking_uri(MLFLOW_TRACKING_URI); MlflowClient().get_model_version(MODEL_NAME, os.environ['MODEL_VERSION'])\"; do echo 'waiting for model version'; sleep 4; done"]
       containers:
         - name: inference
           image: pipeline-ml-inference:dev
           imagePullPolicy: IfNotPresent
-          # (default image CMD runs uvicorn on :8000)
           envFrom:
             - configMapRef: { name: pipeline-config }   # MLFLOW_TRACKING_URI
           env:
             - name: PREDICTIONS_DB_URL
               valueFrom:
                 secretKeyRef: { name: pipeline-secret, key: PREDICTIONS_DB_URL }
+            - name: MODEL_VERSION                       # pins the model version
+              valueFrom:
+                configMapKeyRef: { name: model-release, key: MODEL_VERSION }
           ports:
             - containerPort: 8000
+          # startupProbe gives the slow startup (load model from MLflow +
+          # score the holdout) up to ~5 min under a CPU-starved laptop before
+          # liveness can fire — so a slow start isn't mistaken for a crash
+          # (resolved-issue #10). Liveness/readiness also get tolerant
+          # timeouts for the same reason.
+          startupProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             httpGet: { path: /health, port: 8000 }
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
           livenessProbe:
             httpGet: { path: /health, port: 8000 }
             initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
 ---
 apiVersion: v1
 kind: Service

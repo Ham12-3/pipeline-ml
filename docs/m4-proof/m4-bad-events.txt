@@ -1,0 +1,166 @@
+LAST SEEN   TYPE      REASON                  OBJECT                                 MESSAGE
+47m         Normal    Scheduled               pod/drift-29653000-sjn8w               Successfully assigned pipeline-ml/drift-29653000-sjn8w to k3d-pipeline-ml-server-0
+2m55s       Normal    Scheduled               pod/inference-cd464759d-kbk9g          Successfully assigned pipeline-ml/inference-cd464759d-kbk9g to k3d-pipeline-ml-server-0
+22m         Normal    Scheduled               pod/drift-29653025-jgg56               Successfully assigned pipeline-ml/drift-29653025-jgg56 to k3d-pipeline-ml-server-0
+27m         Normal    Scheduled               pod/drift-29653020-26th8               Successfully assigned pipeline-ml/drift-29653020-26th8 to k3d-pipeline-ml-server-0
+23m         Normal    Scheduled               pod/inference-6b5b67999b-blqkg         Successfully assigned pipeline-ml/inference-6b5b67999b-blqkg to k3d-pipeline-ml-server-0
+24m         Normal    Scheduled               pod/inference-6b5b67999b-5l7x8         Successfully assigned pipeline-ml/inference-6b5b67999b-5l7x8 to k3d-pipeline-ml-server-0
+52m         Normal    Scheduled               pod/drift-29652995-c4v87               Successfully assigned pipeline-ml/drift-29652995-c4v87 to k3d-pipeline-ml-server-0
+2m9s        Normal    Scheduled               pod/drift-29653045-fsxcr               Successfully assigned pipeline-ml/drift-29653045-fsxcr to k3d-pipeline-ml-server-0
+42m         Normal    Scheduled               pod/drift-29653005-kvct9               Successfully assigned pipeline-ml/drift-29653005-kvct9 to k3d-pipeline-ml-server-0
+7m9s        Normal    Scheduled               pod/drift-29653040-wrsrs               Successfully assigned pipeline-ml/drift-29653040-wrsrs to k3d-pipeline-ml-server-0
+57m         Normal    Scheduled               pod/drift-29652990-98cjj               Successfully assigned pipeline-ml/drift-29652990-98cjj to k3d-pipeline-ml-server-0
+17m         Normal    Scheduled               pod/drift-29653030-hr5bk               Successfully assigned pipeline-ml/drift-29653030-hr5bk to k3d-pipeline-ml-server-0
+32m         Normal    Scheduled               pod/drift-29653015-8cm2k               Successfully assigned pipeline-ml/drift-29653015-8cm2k to k3d-pipeline-ml-server-0
+12m         Normal    Scheduled               pod/drift-29653035-ktpqc               Successfully assigned pipeline-ml/drift-29653035-ktpqc to k3d-pipeline-ml-server-0
+37m         Normal    Scheduled               pod/drift-29653010-hft4g               Successfully assigned pipeline-ml/drift-29653010-hft4g to k3d-pipeline-ml-server-0
+14m         Normal    Scheduled               pod/train-bad-jdp9k                    Successfully assigned pipeline-ml/train-bad-jdp9k to k3d-pipeline-ml-server-0
+57m         Normal    SuccessfulCreate        cronjob/drift                          Created job drift-29652990
+57m         Normal    SuccessfulCreate        job/drift-29652990                     Created pod: drift-29652990-98cjj
+57m         Normal    Pulled                  pod/drift-29652990-98cjj               Container image "pipeline-ml-drift:dev" already present on machine
+57m         Normal    Started                 pod/drift-29652990-98cjj               Started container drift
+57m         Normal    Created                 pod/drift-29652990-98cjj               Created container drift
+56m         Normal    SawCompletedJob         cronjob/drift                          Saw completed job: drift-29652990, condition: Complete
+56m         Normal    Completed               job/drift-29652990                     Job completed
+56m         Normal    SuccessfulDelete        cronjob/drift                          Deleted job drift-29652975
+54m         Warning   Unhealthy               pod/inference-59ff76bd95-f4tm6         Liveness probe failed: Get "http://10.42.0.81:8000/health": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+54m         Warning   Unhealthy               pod/inference-59ff76bd95-5m5pm         Readiness probe failed: Get "http://10.42.0.78:8000/health": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+52m         Normal    SuccessfulCreate        job/drift-29652995                     Created pod: drift-29652995-c4v87
+52m         Normal    SuccessfulCreate        cronjob/drift                          Created job drift-29652995
+52m         Normal    Pulled                  pod/drift-29652995-c4v87               Container image "pipeline-ml-drift:dev" already present on machine
+52m         Normal    Created                 pod/drift-29652995-c4v87               Created container drift
+52m         Normal    Started                 pod/drift-29652995-c4v87               Started container drift
+52m         Normal    SuccessfulDelete        cronjob/drift                          Deleted job drift-29652980
+52m         Normal    SawCompletedJob         cronjob/drift                          Saw completed job: drift-29652995, condition: Complete
+52m         Normal    Completed               job/drift-29652995                     Job completed
+47m         Normal    SuccessfulCreate        job/drift-29653000                     Created pod: drift-29653000-sjn8w
+47m         Normal    Pulled                  pod/drift-29653000-sjn8w               Container image "pipeline-ml-drift:dev" already present on machine
+47m         Normal    Created                 pod/drift-29653000-sjn8w               Created container drift
+47m         Normal    Started                 pod/drift-29653000-sjn8w               Started container drift
+46m         Normal    SawCompletedJob         cronjob/drift                          (combined from similar events): Saw completed job: drift-29653000, condition: Complete
+46m         Normal    SuccessfulDelete        cronjob/drift                          (combined from similar events): Deleted job drift-29652985
+46m         Normal    Completed               job/drift-29653000                     Job completed
+44m         Warning   Unhealthy               pod/inference-59ff76bd95-xdrhb         Readiness probe failed: Get "http://10.42.0.82:8000/health": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+42m         Normal    SuccessfulCreate        job/drift-29653005                     Created pod: drift-29653005-kvct9
+42m         Normal    Started                 pod/drift-29653005-kvct9               Started container drift
+42m         Normal    Created                 pod/drift-29653005-kvct9               Created container drift
+42m         Normal    Pulled                  pod/drift-29653005-kvct9               Container image "pipeline-ml-drift:dev" already present on machine
+42m         Normal    Completed               job/drift-29653005                     Job completed
+40m         Normal    RolloutUpdated          rollout/inference                      Rollout updated to revision 3
+40m         Normal    ScalingReplicaSet       rollout/inference                      Scaled down ReplicaSet inference-59ff76bd95 (revision 3) from 4 to 2
+40m         Normal    SuccessfulDelete        replicaset/inference-59ff76bd95        Deleted pod: inference-59ff76bd95-5m5pm
+40m         Normal    SuccessfulDelete        replicaset/inference-59ff76bd95        Deleted pod: inference-59ff76bd95-f4tm6
+40m         Normal    SkipSteps               rollout/inference                      Rollback to stable ReplicaSets
+40m         Normal    Killing                 pod/inference-59ff76bd95-5m5pm         Stopping container inference
+40m         Normal    Killing                 pod/inference-59ff76bd95-f4tm6         Stopping container inference
+40m         Warning   Unhealthy               pod/inference-59ff76bd95-f4tm6         Readiness probe failed: Get "http://10.42.0.81:8000/health": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+40m         Warning   Unhealthy               pod/inference-59ff76bd95-mhwxn         Readiness probe failed: Get "http://10.42.0.85:8000/health": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+40m         Warning   Unhealthy               pod/inference-59ff76bd95-xdrhb         Liveness probe failed: Get "http://10.42.0.82:8000/health": context deadline exceeded (Client.Timeout exceeded while awaiting headers)
+40m         Warning   Unhealthy               pod/inference-59ff76bd95-f4tm6         Readiness probe failed: Get "http://10.42.0.81:8000/health": dial tcp 10.42.0.81:8000: i/o timeout (Client.Timeout exceeded while awaiting headers)
+40m         Warning   Unhealthy               pod/inference-59ff76bd95-5m5pm         Readiness probe failed: Get "http://10.42.0.78:8000/health": dial tcp 10.42.0.78:8000: connect: connection refused
+37m         Normal    SuccessfulCreate        job/drift-29653010                     Created pod: drift-29653010-hft4g
+37m         Normal    Pulled                  pod/drift-29653010-hft4g               Container image "pipeline-ml-drift:dev" already present on machine
+37m         Normal    Created                 pod/drift-29653010-hft4g               Created container drift
+37m         Normal    Started                 pod/drift-29653010-hft4g               Started container drift
+37m         Normal    Completed               job/drift-29653010                     Job completed
+34m         Warning   Unhealthy               pod/postgres-59dd795476-wjbn8          Readiness probe failed: command timed out: "pg_isready -U pipeline -d pipeline" timed out after 1s
+32m         Normal    SuccessfulCreate        job/drift-29653015                     Created pod: drift-29653015-8cm2k
+32m         Normal    Started                 pod/drift-29653015-8cm2k               Started container drift
+32m         Normal    Pulled                  pod/drift-29653015-8cm2k               Container image "pipeline-ml-drift:dev" already present on machine
+32m         Normal    Created                 pod/drift-29653015-8cm2k               Created container drift
+31m         Normal    Completed               job/drift-29653015                     Job completed
+27m         Normal    SuccessfulCreate        job/drift-29653020                     Created pod: drift-29653020-26th8
+27m         Normal    Pulled                  pod/drift-29653020-26th8               Container image "pipeline-ml-drift:dev" already present on machine
+27m         Normal    Created                 pod/drift-29653020-26th8               Created container drift
+27m         Normal    Started                 pod/drift-29653020-26th8               Started container drift
+26m         Normal    Completed               job/drift-29653020                     Job completed
+24m         Normal    RolloutNotCompleted     rollout/inference                      Rollout not completed, started update to revision 4 (6b5b67999b)
+24m         Normal    SuccessfulCreate        replicaset/inference-6b5b67999b        Created pod: inference-6b5b67999b-5l7x8
+24m         Normal    RolloutUpdated          rollout/inference                      Rollout updated to revision 4
+24m         Normal    NewReplicaSetCreated    rollout/inference                      Created ReplicaSet inference-6b5b67999b (revision 4)
+24m         Normal    ScalingReplicaSet       rollout/inference                      Scaled up ReplicaSet inference-6b5b67999b (revision 4) from 0 to 1
+24m         Normal    Started                 pod/inference-6b5b67999b-5l7x8         Started container wait-model
+24m         Normal    Created                 pod/inference-6b5b67999b-5l7x8         Created container wait-model
+24m         Normal    Pulled                  pod/inference-6b5b67999b-5l7x8         Container image "pipeline-ml-inference:dev" already present on machine
+24m         Normal    Created                 pod/inference-6b5b67999b-5l7x8         Created container inference
+24m         Normal    Pulled                  pod/inference-6b5b67999b-5l7x8         Container image "pipeline-ml-inference:dev" already present on machine
+24m         Normal    Started                 pod/inference-6b5b67999b-5l7x8         Started container inference
+24m         Normal    AnalysisRunRunning      rollout/inference                      Step Analysis Run 'inference-6b5b67999b-4-1' Status New: 'Running' Previous: ''
+23m         Normal    RolloutStepCompleted    rollout/inference                      Rollout step 2/3 completed (analysis)
+23m         Normal    AnalysisRunSuccessful   rollout/inference                      Step Analysis Run 'inference-6b5b67999b-4-1' Status New: 'Successful' Previous: 'Running'
+23m         Normal    AnalysisRunSuccessful   analysisrun/inference-6b5b67999b-4-1   Analysis Completed. Result: Successful
+23m         Normal    MetricSuccessful        analysisrun/inference-6b5b67999b-4-1   Metric 'holdout-accuracy' Completed. Result: Successful
+23m         Normal    ScalingReplicaSet       rollout/inference                      Scaled down ReplicaSet inference-59ff76bd95 (revision 3) from 2 to 1
+23m         Normal    ScalingReplicaSet       rollout/inference                      Scaled up ReplicaSet inference-6b5b67999b (revision 4) from 1 to 2
+23m         Normal    SuccessfulDelete        replicaset/inference-59ff76bd95        Deleted pod: inference-59ff76bd95-xdrhb
+23m         Normal    Killing                 pod/inference-59ff76bd95-xdrhb         Stopping container inference
+23m         Normal    SuccessfulCreate        replicaset/inference-6b5b67999b        Created pod: inference-6b5b67999b-blqkg
+23m         Normal    Pulled                  pod/inference-6b5b67999b-blqkg         Container image "pipeline-ml-inference:dev" already present on machine
+23m         Normal    Started                 pod/inference-6b5b67999b-blqkg         Started container wait-model
+23m         Normal    Created                 pod/inference-6b5b67999b-blqkg         Created container wait-model
+23m         Warning   Unhealthy               pod/inference-59ff76bd95-xdrhb         Readiness probe failed: Get "http://10.42.0.82:8000/health": dial tcp 10.42.0.82:8000: connect: connection refused
+23m         Normal    Started                 pod/inference-6b5b67999b-blqkg         Started container inference
+23m         Normal    Pulled                  pod/inference-6b5b67999b-blqkg         Container image "pipeline-ml-inference:dev" already present on machine
+23m         Normal    Created                 pod/inference-6b5b67999b-blqkg         Created container inference
+23m         Warning   Unhealthy               pod/inference-6b5b67999b-blqkg         Readiness probe failed: Get "http://10.42.0.107:8000/health": dial tcp 10.42.0.107:8000: connect: connection refused
+23m         Normal    RolloutStepCompleted    rollout/inference                      Rollout step 3/3 completed (setWeight: 100)
+23m         Normal    Killing                 pod/inference-59ff76bd95-mhwxn         Stopping container inference
+23m         Normal    ScalingReplicaSet       rollout/inference                      Scaled down ReplicaSet inference-59ff76bd95 (revision 3) from 1 to 0
+23m         Normal    SuccessfulDelete        replicaset/inference-59ff76bd95        Deleted pod: inference-59ff76bd95-mhwxn
+22m         Warning   Unhealthy               pod/inference-59ff76bd95-mhwxn         Readiness probe failed: Get "http://10.42.0.85:8000/health": dial tcp 10.42.0.85:8000: connect: connection refused
+22m         Normal    RolloutCompleted        rollout/inference                      Rollout completed update to revision 4 (6b5b67999b): Completed all 3 canary steps
+22m         Normal    SuccessfulCreate        job/drift-29653025                     Created pod: drift-29653025-jgg56
+22m         Normal    Pulled                  pod/drift-29653025-jgg56               Container image "pipeline-ml-drift:dev" already present on machine
+22m         Normal    Created                 pod/drift-29653025-jgg56               Created container drift
+22m         Normal    Started                 pod/drift-29653025-jgg56               Started container drift
+21m         Normal    Completed               job/drift-29653025                     Job completed
+17m         Normal    SuccessfulCreate        job/drift-29653030                     Created pod: drift-29653030-hr5bk
+17m         Normal    Started                 pod/drift-29653030-hr5bk               Started container drift
+17m         Normal    Created                 pod/drift-29653030-hr5bk               Created container drift
+17m         Normal    Pulled                  pod/drift-29653030-hr5bk               Container image "pipeline-ml-drift:dev" already present on machine
+17m         Normal    Completed               job/drift-29653030                     Job completed
+14m         Normal    Started                 pod/train-bad-jdp9k                    Started container wait-mlflow
+14m         Normal    Created                 pod/train-bad-jdp9k                    Created container wait-mlflow
+14m         Normal    Pulled                  pod/train-bad-jdp9k                    Container image "pipeline-ml-inference:dev" already present on machine
+14m         Normal    SuccessfulCreate        job/train-bad                          Created pod: train-bad-jdp9k
+14m         Normal    Started                 pod/train-bad-jdp9k                    Started container train-bad
+14m         Normal    Created                 pod/train-bad-jdp9k                    Created container train-bad
+14m         Normal    Pulled                  pod/train-bad-jdp9k                    Container image "pipeline-ml-inference:dev" already present on machine
+14m         Normal    Completed               job/train-bad                          Job completed
+12m         Normal    Created                 pod/drift-29653035-ktpqc               Created container drift
+12m         Normal    Pulled                  pod/drift-29653035-ktpqc               Container image "pipeline-ml-drift:dev" already present on machine
+12m         Normal    Started                 pod/drift-29653035-ktpqc               Started container drift
+12m         Normal    SuccessfulCreate        job/drift-29653035                     Created pod: drift-29653035-ktpqc
+12m         Normal    Completed               job/drift-29653035                     Job completed
+7m9s        Normal    SuccessfulCreate        job/drift-29653040                     Created pod: drift-29653040-wrsrs
+7m9s        Normal    Pulled                  pod/drift-29653040-wrsrs               Container image "pipeline-ml-drift:dev" already present on machine
+7m9s        Normal    Created                 pod/drift-29653040-wrsrs               Created container drift
+7m9s        Normal    Started                 pod/drift-29653040-wrsrs               Started container drift
+7m2s        Normal    Completed               job/drift-29653040                     Job completed
+2m55s       Normal    SuccessfulCreate        replicaset/inference-cd464759d         Created pod: inference-cd464759d-kbk9g
+2m55s       Normal    ScalingReplicaSet       rollout/inference                      Scaled up ReplicaSet inference-cd464759d (revision 5) from 0 to 1
+2m55s       Normal    Pulled                  pod/inference-cd464759d-kbk9g          Container image "pipeline-ml-inference:dev" already present on machine
+2m55s       Normal    Created                 pod/inference-cd464759d-kbk9g          Created container wait-model
+2m55s       Normal    Started                 pod/inference-cd464759d-kbk9g          Started container wait-model
+2m55s       Normal    RolloutUpdated          rollout/inference                      Rollout updated to revision 5
+2m55s       Normal    NewReplicaSetCreated    rollout/inference                      Created ReplicaSet inference-cd464759d (revision 5)
+2m55s       Normal    RolloutNotCompleted     rollout/inference                      Rollout not completed, started update to revision 5 (cd464759d)
+2m48s       Normal    Pulled                  pod/inference-cd464759d-kbk9g          Container image "pipeline-ml-inference:dev" already present on machine
+2m48s       Normal    Created                 pod/inference-cd464759d-kbk9g          Created container inference
+2m48s       Normal    Started                 pod/inference-cd464759d-kbk9g          Started container inference
+2m40s       Normal    RolloutStepCompleted    rollout/inference                      Rollout step 1/3 completed (setWeight: 25)
+2m39s       Normal    AnalysisRunRunning      rollout/inference                      Step Analysis Run 'inference-cd464759d-5-1' Status New: 'Running' Previous: ''
+2m20s       Normal    Killing                 pod/inference-cd464759d-kbk9g          Stopping container inference
+2m20s       Normal    SuccessfulDelete        replicaset/inference-cd464759d         Deleted pod: inference-cd464759d-kbk9g
+2m20s       Warning   RolloutAborted          rollout/inference                      Rollout aborted update to revision 5: Step-based analysis phase error/failed: Metric "holdout-accuracy" assessed Failed due to failed (2) > failureLimit (1)
+2m20s       Normal    ScalingReplicaSet       rollout/inference                      Scaled down ReplicaSet inference-cd464759d (revision 5) from 1 to 0
+2m20s       Warning   MetricFailed            analysisrun/inference-cd464759d-5-1    Metric 'holdout-accuracy' Completed. Result: Failed
+2m20s       Warning   AnalysisRunFailed       analysisrun/inference-cd464759d-5-1    Analysis Completed. Result: Failed
+2m20s       Warning   AnalysisRunFailed       rollout/inference                      Step Analysis Run 'inference-cd464759d-5-1' Status New: 'Failed' Previous: 'Running'
+2m20s       Warning   Unhealthy               pod/inference-cd464759d-kbk9g          Readiness probe failed: Get "http://10.42.0.113:8000/health": EOF
+2m9s        Normal    SuccessfulCreate        cronjob/drift                          (combined from similar events): Created job drift-29653045
+2m9s        Normal    Pulled                  pod/drift-29653045-fsxcr               Container image "pipeline-ml-drift:dev" already present on machine
+2m9s        Normal    Created                 pod/drift-29653045-fsxcr               Created container drift
+2m9s        Normal    SuccessfulCreate        job/drift-29653045                     Created pod: drift-29653045-fsxcr
+2m9s        Normal    Started                 pod/drift-29653045-fsxcr               Started container drift
+2m2s        Normal    Completed               job/drift-29653045                     Job completed

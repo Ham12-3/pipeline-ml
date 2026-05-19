@@ -1,0 +1,103 @@
+M5 verification — captured live, 2026-05-19
+============================================
+
+Stack (after the resolved-issue #10 slimming so the 3.83 GiB Docker
+Desktop VM holds the full M5 demo):
+
+  $ kubectl get pods -n pipeline-ml
+  NAME                          READY   STATUS    RESTARTS
+  grafana-7d6f5dd879-ctks4      1/1     Running   0
+  inference-77b79cc657-8qb9d    1/1     Running   3
+  lineage-ui-...                1/1     Running   0
+  mlflow-84c5df6d86-vhcsb       1/1     Running   0
+  postgres-59dd795476-wjbn8     1/1     Running   8
+  prometheus-9b8dbc45f-vv5l9    1/1     Running   2
+  pushgateway-6c699b9f78-z2vx5  1/1     Running   2
+
+  drift CronJob: SUSPENDED (manual one-off `drift-m5` Job used to push
+  one PSI sample for the panel).
+
+--------------------------------------------------------------------
+M5.1 — inference /metrics now exposes volume + latency
+--------------------------------------------------------------------
+
+After sending 50 predictions to the inference Service from inside the
+pod, /metrics returned:
+
+  model_holdout_accuracy{model="income-clf",model_version="2"} 0.917
+  prediction_requests_total{model="income-clf",model_version="2"} 50
+  prediction_errors_total{model="income-clf",model_version="2"} 0
+  prediction_latency_seconds_sum{model="income-clf",model_version="2"} 7.258128145998853
+  prediction_latency_seconds_count{model="income-clf",model_version="2"} 50
+
+Avg per-prediction latency 7.258 / 50 = 145 ms.
+
+--------------------------------------------------------------------
+M5.2 — Grafana, datasource + dashboard auto-provisioned, queries live
+--------------------------------------------------------------------
+
+Verified via Grafana's own HTTP API (kubectl port-forward 3000):
+
+  GET /api/health
+    -> { "database": "ok", "version": "11.3.0" }
+
+  GET /api/datasources/uid/prometheus
+    -> { "name": "Prometheus", "url": "http://prometheus:9090" }
+
+  GET /api/search?query=pipeline-ml
+    -> [ { "title": "pipeline-ml — ML reliability", ... } ]
+
+All four panel queries run through Grafana's datasource proxy
+(/api/datasources/proxy/uid/prometheus/api/v1/query) returned live
+values:
+
+  min(model_holdout_accuracy)    = 0.917      [Canary gate panel, ≥ 0.7 ✓]
+  sum(prediction_requests_total) = 50         [Volume panel]
+  sum(rate(prediction_latency_seconds_sum[5m]))
+    / clamp_min(sum(rate(prediction_latency_seconds_count[5m])), 1)
+                                 = 0.0246 s   [Avg latency panel]
+  model_drift_psi                = 0.9631     [Drift PSI panel, > 0.2 -> red]
+
+(0.9631 PSI is "significant drift" — expected, because the synthetic
+random features used to drive volume don't match the training pool.
+The drift detector correctly flags it; the panel shows red.)
+
+--------------------------------------------------------------------
+M5.3 — Streamlit lineage receipt page
+--------------------------------------------------------------------
+
+  GET http://127.0.0.1:8501/_stcore/health   -> HTTP 200, body "ok"
+
+End-to-end probe from INSIDE the lineage-ui pod (same path Streamlit
+takes when you click its buttons):
+
+  POST inference:8000/predict  ->  prediction_id 91f5e17a-...
+  GET  inference:8000/lineage/91f5e17a-...
+    -> {
+         "prediction": {
+           "model_version": "2", "prediction": 0, "proba": 0.5974, ...
+         },
+         "model_lineage": {
+           "run_id": "6be3353aa20f4ffc9ad7a9685930f4d3",
+           "params": { "n_estimators": "120", "max_depth": "8",
+                       "deliberately_bad": "False", ... },
+           "metrics": { "accuracy": 0.938, "f1": 0.9373 },
+           "git_sha": "unknown", "dataset_hash": ...
+         }
+       }
+
+Streamlit renders this same receipt as a readable page (the JSON above
+is what its "Fetch receipt" button shows after a "Send a prediction").
+
+--------------------------------------------------------------------
+How to see the dashboards yourself (port-forwards already running)
+--------------------------------------------------------------------
+
+  kubectl port-forward -n pipeline-ml svc/grafana    3000:3000
+  kubectl port-forward -n pipeline-ml svc/lineage-ui 8501:8501
+  kubectl port-forward -n pipeline-ml svc/prometheus 9090:9090
+
+Open:
+  http://localhost:3000/d/pipeline-ml   (Grafana — anonymous Admin)
+  http://localhost:8501                 (Streamlit lineage page)
+  http://localhost:9090                 (raw Prometheus)

@@ -18,6 +18,14 @@ metadata:
   namespace: pipeline-ml
 spec:
   replicas: 1
+  # Recreate (not the default RollingUpdate): on the 3.83 GiB laptop VM a
+  # rolling update briefly runs 2 mlflow pods, and 2 mlflow + 2 inference
+  # at once deadlocks (nothing gets enough RAM to pass readiness, so the
+  # old pod is never retired -> permanent surge). Recreate kills the old
+  # pod first, then starts the new one: never two at once. Brief mlflow
+  # downtime on redeploy is fine for an internal registry. (resolved-issue #10)
+  strategy:
+    type: Recreate
   selector:
     matchLabels: { app: mlflow }
   template:
@@ -56,14 +64,23 @@ spec:
           # TCP probe (not HTTP) on purpose: an HTTP probe's Host header would
           # be the pod IP and the DNS-rebinding guard would 403 it. A port
           # check sidesteps that while keeping the guard strict for real calls.
+          # Tolerant probes: on a resource-tight single-node laptop the node
+          # gets CPU-starved under load and a 1s-timeout/3-fail probe will
+          # SIGTERM a perfectly healthy server (the M5 CrashLoop root cause —
+          # resolved-issue #10). Generous timeout + failureThreshold means the
+          # server has to be genuinely down ~60s before kubelet kills it.
           readinessProbe:
             tcpSocket: { port: 5000 }
             initialDelaySeconds: 5
             periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
           livenessProbe:
             tcpSocket: { port: 5000 }
             initialDelaySeconds: 20
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
       volumes:
         - name: artifacts
           persistentVolumeClaim: { claimName: mlartifacts }

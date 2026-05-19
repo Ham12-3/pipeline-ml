@@ -11,7 +11,10 @@ Run from repo root:  python -m uvicorn services.inference.app:app --port 8000
 from __future__ import annotations
 
 import json
+import os
 import sys
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,27 +23,56 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from mlflow.tracking import MlflowClient
 from pydantic import BaseModel, Field
+from sklearn.metrics import accuracy_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root on path
 from common import (  # noqa: E402
     FEATURE_NAMES, MLFLOW_TRACKING_URI, MODEL_ALIAS, MODEL_NAME, N_FEATURES,
+    production_sample,
 )
 from db import get_prediction, init_db, log_prediction  # noqa: E402
 from lineage import run_provenance  # noqa: E402
 
 STATE: dict = {}
 
+# In-process serving metrics (volume + latency). Counters only ever grow, so
+# Grafana uses rate()/increase() over them. A lock keeps the read-modify-write
+# safe since FastAPI runs sync endpoints in a threadpool. Hand-tracked for the
+# same reason model_holdout_accuracy is: no new pip dep, image layer unchanged.
+_MX = threading.Lock()
+_M = {"requests": 0, "errors": 0, "latency_sum": 0.0}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mv = MlflowClient().get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)
-    STATE["model"] = mlflow.sklearn.load_model(f"models:/{MODEL_NAME}@{MODEL_ALIAS}")
+    client = MlflowClient()
+
+    # The Argo Rollout pins which model version a given revision serves via
+    # MODEL_VERSION. With it unset we fall back to the `production` alias, so
+    # running this image anywhere else behaves exactly as before.
+    pinned = os.environ.get("MODEL_VERSION")
+    if pinned:
+        mv = client.get_model_version(MODEL_NAME, pinned)
+        model_uri = f"models:/{MODEL_NAME}/{pinned}"
+    else:
+        mv = client.get_model_version_by_alias(MODEL_NAME, MODEL_ALIAS)
+        model_uri = f"models:/{MODEL_NAME}@{MODEL_ALIAS}"
+
+    STATE["model"] = mlflow.sklearn.load_model(model_uri)
     STATE["model_version"] = mv.version
     STATE["run_id"] = mv.run_id
+
+    # Closed-loop signal: score THIS model on a fixed labeled holdout once at
+    # startup and expose it at /metrics. The canary analysis reads this back
+    # from Prometheus to decide promote vs auto-rollback.
+    Xh, yh = production_sample(2000, seed=12345)
+    Xh = pd.DataFrame(Xh, columns=FEATURE_NAMES)
+    STATE["holdout_accuracy"] = float(accuracy_score(yh, STATE["model"].predict(Xh)))
+
     init_db()
     yield
     STATE.clear()
@@ -60,12 +92,47 @@ def health():
         "model": MODEL_NAME,
         "model_version": STATE.get("model_version"),
         "alias": MODEL_ALIAS,
+        "holdout_accuracy": STATE.get("holdout_accuracy"),
     }
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus exposition. Hand-rendered on purpose: keeps the image's
+    dependency set (and its slow-to-build layer) unchanged. The metric is
+    labelled by model_version so the canary analysis can query the candidate.
+    """
+    version = STATE.get("model_version", "unknown")
+    acc = STATE.get("holdout_accuracy", 0.0)
+    with _MX:
+        reqs, errs, lat_sum = _M["requests"], _M["errors"], _M["latency_sum"]
+    labels = f'model="{MODEL_NAME}",model_version="{version}"'
+    body = (
+        "# HELP model_holdout_accuracy Accuracy of the served model on a "
+        "fixed labeled holdout.\n"
+        "# TYPE model_holdout_accuracy gauge\n"
+        f"model_holdout_accuracy{{{labels}}} {acc}\n"
+        "# HELP prediction_requests_total Successful /predict requests served.\n"
+        "# TYPE prediction_requests_total counter\n"
+        f"prediction_requests_total{{{labels}}} {reqs}\n"
+        "# HELP prediction_errors_total Rejected /predict requests (bad input).\n"
+        "# TYPE prediction_errors_total counter\n"
+        f"prediction_errors_total{{{labels}}} {errs}\n"
+        "# HELP prediction_latency_seconds Cumulative /predict latency. "
+        "Grafana derives avg latency as rate(sum)/rate(count).\n"
+        "# TYPE prediction_latency_seconds summary\n"
+        f"prediction_latency_seconds_sum{{{labels}}} {lat_sum}\n"
+        f"prediction_latency_seconds_count{{{labels}}} {reqs}\n"
+    )
+    return Response(content=body, media_type="text/plain; version=0.0.4")
 
 
 @app.post("/predict")
 def predict(req: PredictRequest):
+    start = time.perf_counter()
     if len(req.features) != N_FEATURES:
+        with _MX:
+            _M["errors"] += 1
         raise HTTPException(
             status_code=422,
             detail=f"expected {N_FEATURES} features, got {len(req.features)}",
@@ -84,6 +151,10 @@ def predict(req: PredictRequest):
         prediction=pred,
         proba=proba,
     )
+
+    with _MX:
+        _M["requests"] += 1
+        _M["latency_sum"] += time.perf_counter() - start
 
     return {
         "prediction_id": prediction_id,

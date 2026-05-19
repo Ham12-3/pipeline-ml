@@ -10,10 +10,12 @@ Run from repo root:  python services/drift_job/drift_job.py --limit 1000
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root on path
 from common import FEATURE_NAMES  # noqa: E402
@@ -54,6 +56,17 @@ def main() -> None:
                else "moderate drift" if worst >= 0.1
                else "stable")
     print(f"RESULT: max PSI = {worst:.4f}  ->  {overall}\n")
+
+    # Batch jobs can't be scraped (they exit); push the gauge to Pushgateway
+    # so Prometheus (and the M5 dashboards) can see drift over time.
+    push_url = os.environ.get("PUSHGATEWAY_URL")
+    if push_url:
+        body = f"# TYPE model_drift_psi gauge\nmodel_drift_psi {worst}\n"
+        try:
+            requests.put(f"{push_url}/metrics/job/drift", data=body, timeout=5)
+            print(f"pushed model_drift_psi={worst:.4f} -> {push_url}")
+        except Exception as e:                       # never fail the job on this
+            print(f"pushgateway push failed: {e}")
 
 
 if __name__ == "__main__":

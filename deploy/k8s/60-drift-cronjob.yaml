@@ -30,6 +30,8 @@ spec:
                 - name: PREDICTIONS_DB_URL
                   valueFrom:
                     secretKeyRef: { name: pipeline-secret, key: PREDICTIONS_DB_URL }
+                - name: PUSHGATEWAY_URL
+                  value: "http://pushgateway:9091"
               volumeMounts:
                 - name: baseline
                   mountPath: /shared/artifacts

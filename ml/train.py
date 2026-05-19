@@ -5,12 +5,15 @@ Run from anywhere:  python ml/train.py
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
+import os
 import sys
 from pathlib import Path
 
 import mlflow
 import mlflow.sklearn
+import numpy as np
 from mlflow.tracking import MlflowClient
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score
@@ -38,10 +41,15 @@ def ensure_experiment() -> None:
     mlflow.set_experiment(MLFLOW_EXPERIMENT)
 
 
-def main() -> None:
+def main(bad: bool = False) -> None:
     X, y = training_data()
     X_tr, X_te, y_tr, y_te = train_test_split(
         X, y, test_size=0.25, random_state=RANDOM_SEED, stratify=y)
+
+    if bad:
+        # Deliberately destroy the label signal so the model learns nothing
+        # (~chance accuracy). Used to PROVE the canary auto-rollback fires.
+        y_tr = np.random.default_rng(0).permutation(y_tr)
 
     model = RandomForestClassifier(**PARAMS).fit(X_tr, y_tr)
     preds = model.predict(X_te)
@@ -52,9 +60,11 @@ def main() -> None:
 
     ensure_experiment()
     with mlflow.start_run() as run:
-        mlflow.log_params({**PARAMS, "n_samples": len(X), "model": "RandomForest"})
+        mlflow.log_params({**PARAMS, "n_samples": len(X),
+                           "model": "RandomForest", "deliberately_bad": bad})
         mlflow.log_metrics({"accuracy": acc, "f1": f1})
-        mlflow.set_tags({"git_sha": sha, "dataset_hash": dhash})
+        mlflow.set_tags({"git_sha": sha, "dataset_hash": dhash,
+                         "quality": "bad" if bad else "good"})
         mlflow.sklearn.log_model(model, artifact_path="model",
                                  registered_model_name=MODEL_NAME)
         run_id = run.info.run_id
@@ -67,6 +77,8 @@ def main() -> None:
     save_baseline(X_tr)
 
     print("=" * 64)
+    if bad:
+        print("!! DELIBERATELY BAD MODEL (labels shuffled) -- for rollback demo")
     print(f"Trained RandomForest  accuracy={acc:.4f}  f1={f1:.4f}")
     print(f"MLflow run_id   : {run_id}")
     print(f"Registered model: {MODEL_NAME} v{version}  alias='{MODEL_ALIAS}'")
@@ -77,4 +89,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bad", action="store_true",
+                    help="train a deliberately bad model (shuffled labels)")
+    args = ap.parse_args()
+    main(bad=args.bad or os.environ.get("TRAIN_BAD") == "1")

@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # imported by the app (it walks up to the repo root), so all must be present.
 COPY common.py .
 COPY db.py .
+COPY lineage.py .
 COPY ml/ ml/
 COPY services/inference/ services/inference/
 
