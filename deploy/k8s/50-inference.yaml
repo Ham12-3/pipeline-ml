@@ -7,7 +7,7 @@ metadata:
   name: model-release
   namespace: pipeline-ml
 data:
-  MODEL_VERSION: "1"
+  MODEL_VERSION: "2"
 ---
 # The food-taster's verdict. During the canary, Argo runs this analysis: it
 # asks Prometheus for the WORST holdout accuracy across all inference pods
@@ -42,7 +42,7 @@ metadata:
   name: inference
   namespace: pipeline-ml
 spec:
-  replicas: 4                       # 25% canary == exactly 1 pod
+  replicas: 2                       # 25% canary == exactly 1 pod
   selector:
     matchLabels: { app: inference }
   strategy:
@@ -57,7 +57,7 @@ spec:
     metadata:
       labels: { app: inference }
       annotations:
-        pipeline-ml/release: "1"    # bump this (with MODEL_VERSION) per release
+        pipeline-ml/release: "2"    # bump this (with MODEL_VERSION) per release
     spec:
       initContainers:
         - name: wait-model

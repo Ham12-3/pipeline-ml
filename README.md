@@ -16,7 +16,7 @@ and automatically rolls back bad model releases (closed loop).
 | M1 | Containerize (Docker + docker-compose) | ✅ |
 | M2 | Local Kubernetes (k3d) | ✅ |
 | M3 | Lineage receipt API | ✅ |
-| M4 | Closed loop (Argo Rollouts auto-rollback) | ⏳ |
+| M4 | Closed loop (Argo Rollouts auto-rollback) | ✅ |
 | M5 | Dashboards & polish (Grafana, Streamlit) | ⏳ |
 
 ## M0 quickstart (pure Python, no Docker/Kubernetes)
@@ -169,3 +169,56 @@ exclude `.git`), e.g. `GIT_SHA=$(git rev-parse --short HEAD) docker compose
 **What M3 proves:** the system is auditable — any single prediction yields a
 full, honest provenance receipt (model version + training params + accuracy +
 code commit + data fingerprint), the foundation for the M4 closed loop.
+
+## M4 — the closed loop (canary + auto-rollback)
+
+A new model release is **not** trusted blindly. Inference runs as an Argo
+**Rollout**: every release goes 25 % canary → automated analysis → 100 %.
+The analysis asks Prometheus for the *worst* holdout accuracy across all
+inference pods and **fails the release if it drops below 0.7**, so a bad
+model is auto-rolled-back with no human in the loop and no serving downtime.
+
+How the pieces fit:
+
+- Each inference pod scores a fixed labeled holdout at startup and exposes
+  `model_holdout_accuracy{model_version=…}` at `/metrics`.
+- Prometheus scrapes every pod individually (canary *and* stable).
+- The `AnalysisTemplate` query is `min(model_holdout_accuracy)` with
+  success condition `≥ 0.7` (FQDN
+  `prometheus.pipeline-ml.svc.cluster.local:9090` so the controller, which
+  runs in the `argo-rollouts` namespace, resolves it correctly).
+- A release = bump `MODEL_VERSION` in the `model-release` ConfigMap **and**
+  the `pipeline-ml/release` pod-template annotation (both in
+  `deploy/k8s/50-inference.yaml`); the annotation change is what makes Argo
+  start a canary.
+
+Prereqs: the M2 cluster up, plus the Argo Rollouts controller and the
+`kubectl argo rollouts` plugin (the
+[kubectl-argo-rollouts](https://github.com/argoproj/argo-rollouts/releases)
+binary on PATH).
+
+```bash
+kubectl apply -f deploy/k8s/                       # includes the Rollout + analysis
+kubectl argo rollouts get rollout inference -n pipeline-ml   # → Healthy
+
+# --- good release: edit MODEL_VERSION + release annotation to a good
+#     version in deploy/k8s/50-inference.yaml, then ---
+kubectl apply -f deploy/k8s/50-inference.yaml
+kubectl argo rollouts get rollout inference -n pipeline-ml --watch
+#  → canary 25% → AnalysisRun Successful → auto-promoted to 100%
+
+# --- bad release (rollback proof) ---
+kubectl delete job train-bad -n pipeline-ml --ignore-not-found
+kubectl apply -f deploy/train-bad-job.yaml         # registers a ~0.45-acc model
+# point MODEL_VERSION + annotation at that version, apply, watch:
+#  → AnalysisRun Failed → RolloutAborted → previous good model still serving
+kubectl exec -n pipeline-ml deploy/inference -- \
+  python -c "import urllib.request;print(urllib.request.urlopen('http://localhost:8000/health').read().decode())"
+#  → model_version is still the previous GOOD version
+```
+
+**What M4 proves (verified 2026-05-19):** the loop is closed. A good model
+(v2, holdout 0.917) auto-promoted through the canary in ~1.5 min; a
+deliberately-bad model (v4, holdout 0.444) drove `min(model_holdout_accuracy)`
+below the 0.7 gate and Argo **auto-aborted in ~32 s** while the previous good
+model kept serving uninterrupted. Captured runs: [`docs/m4-proof/`](docs/m4-proof/).

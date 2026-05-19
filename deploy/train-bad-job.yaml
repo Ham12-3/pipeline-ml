@@ -1,0 +1,42 @@
+# One-off Job that trains a DELIBERATELY BAD model (shuffled training labels,
+# ~chance accuracy) and registers it in MLflow. Used only to PROVE the M4
+# closed-loop auto-rollback: release this version, the canary's holdout
+# accuracy collapses below the AnalysisTemplate threshold, Argo auto-aborts
+# and the previous good model keeps serving.
+#
+# Kept OUT of deploy/k8s/ on purpose: `kubectl apply -f deploy/k8s/` must
+# never re-run bad training. Run it explicitly:
+#   kubectl delete job train-bad -n pipeline-ml --ignore-not-found
+#   kubectl apply -f deploy/train-bad-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: train-bad
+  namespace: pipeline-ml
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-mlflow
+          image: pipeline-ml-inference:dev
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "until python -c \"import urllib.request; urllib.request.urlopen('http://mlflow:5000/health')\"; do echo 'waiting for mlflow'; sleep 3; done"]
+      containers:
+        - name: train-bad
+          image: pipeline-ml-inference:dev
+          imagePullPolicy: IfNotPresent
+          command: ["python", "ml/train.py", "--bad"]
+          envFrom:
+            - configMapRef: { name: pipeline-config }   # MLFLOW_* + PIPELINE_ARTIFACTS_DIR
+          env:
+            - name: PREDICTIONS_DB_URL
+              valueFrom:
+                secretKeyRef: { name: pipeline-secret, key: PREDICTIONS_DB_URL }
+          volumeMounts:
+            - name: baseline
+              mountPath: /shared/artifacts
+      volumes:
+        - name: baseline
+          persistentVolumeClaim: { claimName: baseline }

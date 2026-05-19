@@ -1,17 +1,37 @@
 # pipeline-ml — Progress Checklist
 
-_Last updated: 2026-05-18_
+_Last updated: 2026-05-19_
 
 Legend: `[x]` done · `[~]` in progress / partial · `[ ]` not started
 
-**Overall:** **M0–M3 committed and verified.** **M4 built but NOT yet
-verified** — committed as a work-in-progress checkpoint. M4 adds the closed
-loop (Argo Rollouts canary + Prometheus/Pushgateway + auto-rollback). During
-M4 verification two real bugs were found and fixed (see Resolved issues #6,
-#7); the good-release canary retry was launched but the k3d API server became
-unreachable under laptop resource pressure, so neither the good-release
-promotion nor the bad-release auto-rollback has been confirmed yet. M5 not
-started.
+**Overall:** **M0–M4 committed and verified.** M4 adds the closed loop
+(Argo Rollouts canary + Prometheus/Pushgateway + auto-rollback) and is now
+**verified end-to-end**: a good model auto-promotes through the canary and a
+deliberately-bad model is auto-rolled-back, both with zero human
+intervention and zero serving downtime. M5 not started.
+
+**Today (2026-05-19, session 2 — M4 VERIFIED):** kubectl connectivity was
+fine on the recovered cluster (resolved-issue #4 did not recur this restart).
+Installed the `kubectl-argo-rollouts` plugin (v1.9.0 →
+`C:\Users\mobol\bin`). Re-applied `deploy/k8s/` — this pushed the
+resolved-issue #7 FQDN AnalysisTemplate and `replicas: 2` onto the running
+cluster (the cluster had been running the *old* broken bare-`prometheus`
+AnalysisTemplate, leaving the Rollout stuck Degraded/aborted). Rollout
+recovered to Healthy v1, then:
+- **Good-release proof PASSED:** released model **v2** (`MODEL_VERSION`+
+  annotation bump) → canary 1 pod (v2, holdout 0.917) → analysis 5/5
+  (`min(model_holdout_accuracy)` = 0.917 ≥ 0.7) → **auto-promoted to 100%**
+  in ~1.5 min. `/health` confirmed v2 serving.
+- **Bad-release proof PASSED:** trained a deliberately-bad model
+  (`deploy/train-bad-job.yaml`, registered **v4**, accuracy 0.445) →
+  released v4 → canary pushed `min(model_holdout_accuracy)` to **0.444**
+  (< 0.7) → analysis `assessed Failed (2 > failureLimit 1)` → **Argo
+  auto-aborted in ~32 s**; the good v2 stayed serving the whole time
+  (`ready 2/2` throughout, `/health` still v2 after the abort).
+- Restored the Rollout to the verified-good v2 (Healthy), re-pointed the
+  MLflow `production` alias back to v2 (the `--bad` train had moved it to
+  v4), deleted the one-off `train-bad` Job. Evidence captured under
+  `docs/m4-proof/`. Resolved-issues #7 and #8 CLOSED.
 
 ---
 
@@ -120,7 +140,7 @@ fingerprint differs even though the data is statistically identical. The
 receipt faithfully reports whatever was recorded at train time — but pin
 sklearn/numpy if a *cross-environment* identical hash is ever needed.
 
-## M4 — The closed loop  🚧 BUILT, NOT YET VERIFIED
+## M4 — The closed loop  ✅ COMPLETE
 
 ### Done (code + infra)
 - [x] Argo Rollouts controller installed (argo-rollouts ns; CRDs present)
@@ -138,15 +158,34 @@ sklearn/numpy if a *cross-environment* identical hash is ever needed.
       `model-release` ConfigMap selecting the version
 - [x] Baseline Rollout reached Healthy at v1 (holdout_accuracy 0.917);
       Prometheus confirmed scraping the metric from all 4 pods
+- [x] **Resource right-sizing (2026-05-19):** inference Rollout `replicas`
+      dropped 4 → 2 in `50-inference.yaml` to keep the full M4 stack inside
+      laptop Docker Desktop limits. 25% canary weight still resolves to 1 pod
+      (rounded up from 0.5), so the canary path is unchanged.
 
-### NOT done — verification blocked
-- [ ] Good release auto-promotes (canary passes) — **not confirmed**
-- [ ] Deliberately-bad model auto-rolls-back (canary fails) — **not started**
-- Blocker: after fixing bugs #6/#7 the good-release retry was launched but
-  the k3d API server went unreachable (`Unable to connect: EOF`) under
-  laptop resource pressure (postgres + mlflow + 4 inference + prometheus +
-  pushgateway + argo + train pods). Cluster needs recovery/right-sizing,
-  then re-run the good-release retry and the bad-release rollback.
+### Verification (2026-05-19, on the k3d cluster, replicas=2)
+- [x] `kubectl-argo-rollouts` v1.9.0 plugin installed → `C:\Users\mobol\bin`
+- [x] `kubectl apply -f deploy/k8s/` pushed the FQDN AnalysisTemplate
+      (resolved-issue #7) + `replicas: 2`; Rollout recovered to **Healthy v1**
+- [x] Prometheus scraping both inference pods; `min(model_holdout_accuracy)`
+      = 0.917 (the exact analysis query) resolves correctly
+- [x] **Good release auto-promotes** — released v2: canary pod served v2
+      (holdout 0.917), AnalysisRun 5/5 Successful, `RolloutCompleted:
+      Completed all 3 canary steps`, `/health` → `model_version 2`.
+      Evidence: `docs/m4-proof/m4-good-rollout.txt`, `m4-good-monitor.log`
+- [x] **Deliberately-bad model auto-rolls-back** — `train-bad` registered
+      v4 (accuracy 0.445); released v4: canary pod served v4 (holdout
+      0.444), `min(model_holdout_accuracy)` dipped to 0.444,
+      `AnalysisRunFailed`, `RolloutAborted ... assessed Failed (2 >
+      failureLimit 1)`; the good v2 kept serving (`ready 2/2` throughout,
+      `/health` still `model_version 2` after the abort). Evidence:
+      `docs/m4-proof/m4-bad-rollout.txt`, `m4-bad-events.txt`,
+      `m4-bad-monitor.log`
+- [x] End-to-end run survived at `replicas: 2` without the k3d API server
+      dropping (resolved-issue #8 closed)
+- [x] Post-verification cleanup: Rollout restored to Healthy v2, MLflow
+      `production` alias re-pointed to v2, one-off `train-bad` Job deleted
+      (manifest `deploy/train-bad-job.yaml` kept for re-runs)
 
 ## M5 — Dashboards & polish
 - [ ] Prometheus scrape config
@@ -198,18 +237,44 @@ sklearn/numpy if a *cross-environment* identical hash is ever needed.
    module named 'lineage'` CrashLoopBackOff. Fix: `COPY lineage.py .` in
    `services/inference/Dockerfile`. Lesson: verify containerised, not just
    local. (The M3 commit's container path was broken; M4 fixes it.)
-7. **AnalysisTemplate Prometheus address — FIXED.** Used a bare `prometheus`
-   host. The Argo Rollouts controller runs in the `argo-rollouts` namespace
-   and issues the query from there, so the name resolved against the wrong
-   namespace → `server misbehaving`, analysis `Error`, false abort of a GOOD
-   model. Fix: FQDN `http://prometheus.pipeline-ml.svc.cluster.local:9090`.
-8. **k3d API unreachable under load — OPEN.** Running the full M4 stack on a
-   laptop (postgres + mlflow + 4 inference + prometheus + pushgateway + argo
-   + train pods) made the k3d API server return `Unable to connect: EOF`
-   mid-verification. Likely Docker Desktop resource limits. To recover:
-   ensure Docker Desktop has more CPU/RAM, `k3d cluster start pipeline-ml`,
-   re-apply resolved-issue #4, scale `inference` replicas down (e.g. 2), then
-   re-run the good-release retry + bad-release rollback.
+7. **AnalysisTemplate Prometheus address — FIXED & CLOSED (2026-05-19).**
+   Used a bare `prometheus` host. The Argo Rollouts controller runs in the
+   `argo-rollouts` namespace and issues the query from there, so the name
+   resolved against the wrong namespace → `server misbehaving`, analysis
+   `Error`, false abort of a GOOD model. Fix: FQDN
+   `http://prometheus.pipeline-ml.svc.cluster.local:9090`. The fix was in
+   the file but had never been applied to the running cluster — the cluster
+   sat Degraded on the old bare-host template until the 2026-05-19
+   re-apply. Confirmed closed: the bad-release analysis returned `assessed
+   **Failed**` (real value below threshold), not `assessed **Error**`
+   (Prometheus unreachable) — i.e. the query now resolves and the verdict
+   is genuine. Lesson: a fix in the repo is not a fix on the cluster until
+   re-applied.
+8. **k3d API unreachable under load — CLOSED (2026-05-19).** Running the
+   full M4 stack on a laptop (postgres + mlflow + 4 inference + prometheus +
+   pushgateway + argo + train pods) made the k3d API server return `Unable
+   to connect: EOF` mid-verification on 2026-05-18. Mitigations applied:
+   (a) Docker Desktop CPU/RAM bumped; (b) inference Rollout `replicas`
+   dropped 4 → 2 in `50-inference.yaml`; (c) cluster restarted clean.
+   CLOSED: the full M4 verification (good promote + bad rollback +
+   v2 restore, including a transient `train-bad` pod) ran end-to-end at
+   `replicas: 2` with no API-server drop.
+9. **Docker Desktop zombie-daemon after CPU/RAM bump (2026-05-19) — FIXED.**
+   Bumping Docker Desktop's resource allocation triggered an auto-restart
+   that didn't complete cleanly. The daemon ended up accepting commands but
+   never replying — `docker ps`, `docker logs`, and `k3d cluster start` all
+   hung with no output. Root cause: a stuck WSL2 backend from the partial
+   restart. Recovery sequence (in admin PowerShell):
+   `taskkill /F /IM "Docker Desktop.exe" /IM "com.docker.backend.exe" /IM
+   "com.docker.build.exe" /IM "com.docker.dev-envs.exe" /IM "vpnkit.exe"`,
+   `wsl --shutdown`, then relaunch Docker Desktop normally. After ~3 min
+   the daemon came back; `docker ps` returned the empty header row,
+   `k3d cluster list` showed `pipeline-ml 0/1`, and
+   `k3d cluster start pipeline-ml` completed in ~16s.
+   Lesson: any Docker Desktop resource change on Windows can leave the
+   daemon half-alive. If `docker ps` hangs (not errors, hangs) for >60s,
+   skip diagnosis and go straight to the hard-kill + `wsl --shutdown`
+   recovery — it's faster than waiting.
 
 ## File inventory
 
@@ -225,37 +290,49 @@ services/inference/app.py        services/inference/Dockerfile
 services/drift_job/drift_job.py  services/drift_job/Dockerfile
 deploy/docker-compose.yml
 deploy/k8s/  (00-namespace 10-config 20-postgres 30-mlflow 40-train-job
-              50-inference[Rollout+AnalysisTemplate] 60-drift-cronjob
-              70-observability[Prometheus+Pushgateway]).yaml
+              50-inference[Rollout+AnalysisTemplate, replicas=2,
+                           model-release MODEL_VERSION=2 / release="2"]
+              60-drift-cronjob 70-observability[Prometheus+Pushgateway]).yaml
+deploy/train-bad-job.yaml   (one-off; NOT in deploy/k8s/ — never auto-applied)
+docs/m4-proof/  (m4-good-rollout.txt m4-good-monitor.log
+                 m4-bad-rollout.txt m4-bad-events.txt m4-bad-monitor.log)
 scripts/inject_drift.py
 ```
 Local (gitignored) state: `.venv/`, `.claude/`, `mlflow.db`, `mlartifacts/`,
 `predictions.db`, `artifacts/baseline.npz`. Docker (M1) state = named volumes
 `deploy_pgdata`/`deploy_mlartifacts`/`deploy_baseline`. K8s (M2) state =
-PVCs in the `pipeline-ml` namespace; k3d binary at `C:\Users\mobol\bin`.
+PVCs in the `pipeline-ml` namespace. Binaries on user PATH at
+`C:\Users\mobol\bin`: `k3d`, `kubectl-argo-rollouts` (v1.9.0, the
+`kubectl argo rollouts` plugin).
 
 ## How to resume
 
-M0–M3 are committed and verified. **M4 is committed as a WIP checkpoint —
-built but NOT verified.**
+**M0–M4 are committed and verified.** Next milestone: **M5 — Dashboards
+& polish.**
 
-**To finish M4 (pick up here):**
-1. Give Docker Desktop more CPU/RAM (laptop ran out under the full stack).
-2. `k3d cluster start pipeline-ml`; re-apply resolved-issue #4 (repoint
-   kubeconfig to `https://127.0.0.1:<port>`).
-3. Consider lowering the inference Rollout `replicas` to 2 to ease load.
-4. `kubectl apply -f deploy/k8s/`; wait for the Rollout Healthy at v1.
-5. **Good-release retry:** `model-release` MODEL_VERSION=3 + bump the
-   `pipeline-ml/release` annotation → expect canary analysis to PASS
-   (min holdout accuracy ≈ 0.92 ≥ 0.7) → auto-promote to 100%.
-6. **Bad-release proof:** run a `TRAIN_BAD=1` training pod (registers a
-   ~0.5-accuracy version), point `model-release` at it + bump the
-   annotation → expect canary analysis to FAIL → Argo auto-aborts →
-   previous good model keeps serving (rollback). Capture evidence.
-7. Then update README (M4 section + flip the milestone table) and
-   re-commit as verified-complete.
+**Re-demo the M4 closed loop** (cluster already up; if not, `k3d cluster
+start pipeline-ml`, then `kubectl get nodes` — if it errors with
+`host.docker.internal`, apply resolved-issue #4):
 
+1. Baseline: `kubectl argo rollouts get rollout inference -n pipeline-ml`
+   → Healthy, serving v2.
+2. **Good release:** bump `MODEL_VERSION` + the `pipeline-ml/release`
+   annotation in `deploy/k8s/50-inference.yaml` to an existing good
+   version, `kubectl apply -f deploy/k8s/50-inference.yaml`, watch
+   `kubectl argo rollouts get rollout inference -n pipeline-ml --watch`
+   → canary analysis PASS → auto-promote.
+3. **Bad release / rollback:**
+   `kubectl delete job train-bad -n pipeline-ml --ignore-not-found` then
+   `kubectl apply -f deploy/train-bad-job.yaml` (registers a fresh bad
+   version), point `50-inference.yaml` at it + bump the annotation, apply
+   → canary analysis FAIL → Argo auto-aborts → previous good model keeps
+   serving. Restore with the good `MODEL_VERSION`/annotation when done.
+   - Prometheus (analysis source):
+     `kubectl port-forward -n pipeline-ml svc/prometheus 9090:9090`,
+     query `min(model_holdout_accuracy)`.
+   - Last run's evidence is under `docs/m4-proof/`.
 - Re-demo M0/M1/M2/M3: see the matching README quickstart sections.
 
-**After M4: M5 — Dashboards & polish** (Grafana on the Prometheus data,
-Streamlit lineage page, scripted demo + screenshots).
+**M5 — Dashboards & polish** (next): Grafana on the Prometheus data
+(PSI/feature over time, rollout status, latency, volume), Streamlit
+`/lineage` receipt page, README scripted demo + screenshots.

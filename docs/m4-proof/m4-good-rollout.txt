@@ -1,0 +1,27 @@
+Name:            inference
+Namespace:       pipeline-ml
+Status:          ✔ Healthy
+Strategy:        Canary
+  Step:          3/3
+  SetWeight:     100
+  ActualWeight:  100
+Images:          pipeline-ml-inference:dev (stable)
+Replicas:
+  Desired:       2
+  Current:       2
+  Updated:       2
+  Ready:         2
+  Available:     2
+
+NAME                                   KIND         STATUS        AGE    INFO
+⟳ inference                            Rollout      ✔ Healthy     13h    
+├──# revision:4                                                          
+│  ├──⧉ inference-6b5b67999b           ReplicaSet   ✔ Healthy     4m45s  stable
+│  │  ├──□ inference-6b5b67999b-5l7x8  Pod          ✔ Running     4m44s  ready:1/1
+│  │  └──□ inference-6b5b67999b-blqkg  Pod          ✔ Running     3m46s  ready:1/1
+│  └──α inference-6b5b67999b-4-1       AnalysisRun  ✔ Successful  4m28s  ✔ 5
+├──# revision:3                                                          
+│  └──⧉ inference-59ff76bd95           ReplicaSet   • ScaledDown  13h    
+└──# revision:2                                                          
+   ├──⧉ inference-77b79cc657           ReplicaSet   • ScaledDown  12h    
+   └──α inference-77b79cc657-2-1       AnalysisRun  ⚠ Error       12h    ⚠ 5
