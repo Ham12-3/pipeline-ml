@@ -1,0 +1,254 @@
+# Grafana — the dashboard wall on top of Prometheus. Everything is
+# provisioned from ConfigMaps (datasource + dashboard baked in), so the
+# whole thing comes up identically on every `kubectl apply` with zero
+# click-configuration. Anonymous Admin is enabled: this is a local learning
+# cluster and it removes the login wall for the demo / screenshots.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: pipeline-ml
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: pipeline-ml
+data:
+  provider.yaml: |
+    apiVersion: 1
+    providers:
+      - name: pipeline-ml
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: pipeline-ml
+data:
+  pipeline-ml.json: |
+    {
+      "uid": "pipeline-ml",
+      "title": "pipeline-ml — ML reliability",
+      "schemaVersion": 39,
+      "version": 1,
+      "editable": true,
+      "refresh": "10s",
+      "time": { "from": "now-1h", "to": "now" },
+      "templating": { "list": [] },
+      "annotations": { "list": [] },
+      "panels": [
+        {
+          "id": 1,
+          "title": "Canary gate — model holdout accuracy (≥ 0.7 to promote)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            { "refId": "A", "expr": "model_holdout_accuracy", "legendFormat": "model v{{model_version}}" },
+            { "refId": "B", "expr": "min(model_holdout_accuracy)", "legendFormat": "min (what the canary analysis reads)" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "min": 0, "max": 1, "unit": "percentunit",
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 8, "spanNulls": true },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "green", "value": 0.7 }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "min (what the canary analysis reads)" },
+                "properties": [
+                  { "id": "custom.lineWidth", "value": 3 },
+                  { "id": "custom.thresholdsStyle", "value": { "mode": "line" } }
+                ]
+              }
+            ]
+          },
+          "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min"] }, "tooltip": { "mode": "multi" } }
+        },
+        {
+          "id": 2,
+          "title": "Model drift — worst-feature PSI (pushed by the drift CronJob)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            { "refId": "A", "expr": "model_drift_psi", "legendFormat": "worst PSI" }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "spanNulls": true, "thresholdsStyle": { "mode": "dashed" } },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "orange", "value": 0.1 },
+                  { "color": "red", "value": 0.2 }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+        },
+        {
+          "id": 3,
+          "title": "Prediction volume (req/s)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 7, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(prediction_requests_total[5m]))", "legendFormat": "req/s (all pods)" }
+          ],
+          "fieldConfig": {
+            "defaults": { "min": 0, "unit": "reqps", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+        },
+        {
+          "id": 4,
+          "title": "Avg prediction latency",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 7, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            { "refId": "A", "expr": "sum(rate(prediction_latency_seconds_sum[5m])) / clamp_min(sum(rate(prediction_latency_seconds_count[5m])), 1)", "legendFormat": "avg latency" }
+          ],
+          "fieldConfig": {
+            "defaults": { "min": 0, "unit": "s", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 } },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } }
+        },
+        {
+          "id": 5,
+          "title": "Min holdout accuracy",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 5, "w": 8, "x": 0, "y": 15 },
+          "targets": [ { "refId": "A", "expr": "min(model_holdout_accuracy)" } ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 0.7 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "colorMode": "background", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 6,
+          "title": "Predictions served (total)",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 5, "w": 8, "x": 8, "y": 15 },
+          "targets": [ { "refId": "A", "expr": "sum(prediction_requests_total)" } ],
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } },
+            "overrides": []
+          },
+          "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "id": 7,
+          "title": "Worst PSI (latest)",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "gridPos": { "h": 5, "w": 8, "x": 16, "y": 15 },
+          "targets": [ { "refId": "A", "expr": "max(model_drift_psi)" } ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.1 }, { "color": "red", "value": 0.2 } ] }
+            },
+            "overrides": []
+          },
+          "options": { "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: pipeline-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: grafana }
+  template:
+    metadata:
+      labels: { app: grafana }
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.3.0
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: admin
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Admin
+            - name: GF_USERS_DEFAULT_THEME
+              value: light
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: datasources
+          configMap: { name: grafana-datasources }
+        - name: dashboard-provider
+          configMap: { name: grafana-dashboard-provider }
+        - name: dashboards
+          configMap: { name: grafana-dashboards }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: pipeline-ml
+spec:
+  selector: { app: grafana }
+  ports:
+    - port: 3000
+      targetPort: 3000

@@ -1,0 +1,44 @@
+# Streamlit lineage receipt page. Talks ONLY to the inference Service over
+# HTTP (INFERENCE_URL); no model/DB logic of its own. Local image, imported
+# into k3d like the inference/drift images (no registry).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lineage-ui
+  namespace: pipeline-ml
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: lineage-ui }
+  template:
+    metadata:
+      labels: { app: lineage-ui }
+    spec:
+      containers:
+        - name: lineage-ui
+          image: pipeline-ml-lineage-ui:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8501
+          env:
+            - name: INFERENCE_URL
+              value: http://inference:8000          # the inference Service
+          readinessProbe:
+            httpGet: { path: /_stcore/health, port: 8501 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /_stcore/health, port: 8501 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lineage-ui
+  namespace: pipeline-ml
+spec:
+  selector: { app: lineage-ui }
+  ports:
+    - port: 8501
+      targetPort: 8501

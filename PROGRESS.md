@@ -4,11 +4,45 @@ _Last updated: 2026-05-19_
 
 Legend: `[x]` done · `[~]` in progress / partial · `[ ]` not started
 
-**Overall:** **M0–M4 committed and verified.** M4 adds the closed loop
-(Argo Rollouts canary + Prometheus/Pushgateway + auto-rollback) and is now
-**verified end-to-end**: a good model auto-promotes through the canary and a
-deliberately-bad model is auto-rolled-back, both with zero human
-intervention and zero serving downtime. M5 not started.
+**Overall:** **M0–M5 committed and verified.** M5 adds Grafana
+dashboards (auto-provisioned datasource + 7-panel dashboard), a small
+Streamlit lineage receipt page, and request-volume + latency
+instrumentation on the inference `/metrics` endpoint. All verified live
+on the cluster.
+
+**Today (2026-05-19/20, session 3 — M5 VERIFIED):** built M5 in pieces.
+Added hand-rendered `prediction_requests_total` /
+`prediction_latency_seconds_{sum,count}` to `services/inference/app.py`
+`/metrics` (no new pip dep), rebuilt the image, k3d-imported. Deployed
+Grafana (`deploy/k8s/80-grafana.yaml`) with the Prometheus datasource
+and a 7-panel dashboard auto-provisioned from ConfigMaps (anonymous
+Admin for the local demo). Built a small Streamlit lineage UI
+(`services/lineage_ui/{app.py,Dockerfile}` +
+`deploy/k8s/90-lineage-ui.yaml`).
+
+Adding Grafana to the M4 stack tipped the 3.83 GiB Docker Desktop VM
+over (mlflow OOM/CrashLoopBackOff cascading to inference Init wait) —
+resolved-issue #10. The fix was not "give it more RAM" but
+**right-size the deployment**: drift CronJob suspended; inference
+Rollout `replicas: 2 → 1`; mlflow Deployment switched to
+`strategy: Recreate` (no rolling-update doubling on a tight node);
+generous probe timeouts/failureThresholds on mlflow + a startupProbe
+on inference (so a slow under-load start isn't mistaken for a crash).
+After applying these the cluster converged cleanly and the full M5
+stack — postgres, mlflow, prometheus, pushgateway, inference, grafana,
+lineage-ui — sits at ~2.5 GiB of the 3.83 GiB VM with headroom.
+
+Verified end-to-end (see `docs/m5-proof/m5-verification.txt`):
+- /metrics increments correctly under traffic (50 predictions ⇒ counter
+  50, latency_sum 7.26 s ≈ 145 ms / prediction)
+- Grafana `/api/health` `db=ok`; the Prometheus datasource and the
+  `pipeline-ml — ML reliability` dashboard are both provisioned; all
+  four panel queries return live data through Grafana's datasource
+  proxy (`min(model_holdout_accuracy)=0.917`,
+  `sum(prediction_requests_total)=50`, avg latency 0.025 s,
+  `model_drift_psi=0.9631`)
+- Streamlit `/_stcore/health` HTTP 200; predict→lineage flow returns a
+  full receipt for a generated `prediction_id`
 
 **Today (2026-05-19, session 2 — M4 VERIFIED):** kubectl connectivity was
 fine on the recovered cluster (resolved-issue #4 did not recur this restart).
@@ -187,11 +221,43 @@ sklearn/numpy if a *cross-environment* identical hash is ever needed.
       `production` alias re-pointed to v2, one-off `train-bad` Job deleted
       (manifest `deploy/train-bad-job.yaml` kept for re-runs)
 
-## M5 — Dashboards & polish
-- [ ] Prometheus scrape config
-- [ ] Grafana dashboards (PSI/feature over time, rollout status, latency, volume)
-- [ ] Streamlit `/lineage` receipt page
-- [ ] README scripted demo + screenshots
+## M5 — Dashboards & polish  ✅ COMPLETE
+
+### Done
+- [x] **Prometheus scrape config** — already done in M4 (`70-observability`:
+      scrapes pushgateway + per-pod inference via k8s SD)
+- [x] **Inference metrics extended** — `prediction_requests_total`,
+      `prediction_errors_total`, `prediction_latency_seconds_{sum,count}`
+      hand-rendered alongside the existing `model_holdout_accuracy`; no new
+      pip dep, image layer cache preserved (see resolved-issue #10 lesson
+      that *applies* must follow file edits to actually reach the cluster)
+- [x] **Grafana** (`deploy/k8s/80-grafana.yaml`) — Deployment + Service;
+      Prometheus datasource + 7-panel dashboard
+      (`pipeline-ml — ML reliability`) auto-provisioned from ConfigMaps;
+      anonymous Admin for the local demo. Panels: holdout accuracy + 0.7
+      canary gate, drift PSI with thresholds, prediction volume (req/s),
+      avg latency, and three stat tiles
+- [x] **Streamlit lineage UI** (`services/lineage_ui/{app.py,Dockerfile}`
+      + `deploy/k8s/90-lineage-ui.yaml`) — talks ONLY to inference over
+      HTTP; "Send a prediction" → "Fetch receipt" renders the M3
+      `/lineage/{id}` response as a readable page
+- [x] **One-off bad-train manifest** for the rollback demo
+      (`deploy/train-bad-job.yaml`, intentionally outside `deploy/k8s/`)
+- [x] **Capacity right-sizing** — see resolved-issue #10. Inference
+      Rollout `replicas: 2 → 1`; drift CronJob suspended (run on demand);
+      mlflow Deployment `strategy: Recreate` (no surge doubling);
+      tolerant probe timeouts + a startupProbe on inference. The full
+      M5 stack now fits the 3.83 GiB Docker Desktop VM with headroom
+
+### Verification (2026-05-19, live on the cluster)
+- [x] Live `/metrics` after a 50-burst: `prediction_requests_total=50`,
+      `prediction_latency_seconds_sum=7.26 s` (~145 ms / prediction)
+- [x] Grafana `/api/health` `db=ok`, datasource + dashboard provisioned;
+      all 4 panel queries return live values via the datasource proxy
+- [x] Streamlit `/_stcore/health` HTTP 200; predict→lineage returns a
+      full receipt for a generated `prediction_id` (model v2,
+      run_id 6be3353a…, accuracy 0.938)
+- [x] Evidence captured: `docs/m5-proof/m5-verification.txt`
 
 ---
 
@@ -275,6 +341,30 @@ sklearn/numpy if a *cross-environment* identical hash is ever needed.
    daemon half-alive. If `docker ps` hangs (not errors, hangs) for >60s,
    skip diagnosis and go straight to the hard-kill + `wsl --shutdown`
    recovery — it's faster than waiting.
+10. **M5 capacity: rolling-update surge deadlocks a 3.83 GiB VM —
+    FIXED & CLOSED (2026-05-19).** Adding Grafana on top of the M4
+    stack pushed the single-node k3d (Docker Desktop VM = 3.83 GiB,
+    runs the entire cluster) into mlflow CrashLoopBackOff that
+    cascaded to inference Init wait. Two root causes:
+    (a) **Rolling-update SURGE under tight RAM**: a Deployment/Rollout
+    template change starts the new pod alongside the old (maxSurge=1
+    default). Briefly running 2 mlflow + 2 inference left nothing with
+    enough resources to pass readiness, so the old pods were never
+    retired — permanent surge, permanent deadlock. Fix: mlflow
+    `strategy: Recreate` (kill-then-create, never two at once).
+    (b) **Default-tight probes**: under CPU starvation a 1-second
+    `tcpSocket` connect can fail 3× → kubelet SIGTERMs a perfectly
+    healthy server → `Completed exit 0` CrashLoop. Fix: generous
+    `timeoutSeconds` + `failureThreshold` on liveness/readiness, plus
+    a `startupProbe` on inference (the slow startup — load model from
+    MLflow + score a 2k-row holdout — can take a long time under a
+    starved laptop). Also: inference Rollout `replicas: 2 → 1` (canary
+    already proven in M4); drift CronJob suspended (run on demand).
+    Result: full M5 stack converges cleanly to ~2.5 GiB resident with
+    headroom; no probe-kill restart storms. Lesson: a "fix in the
+    file" isn't a fix on the cluster until applied (same lesson as #7);
+    and on a resource-tight node, **surge tolerances + probe tolerances
+    matter more than absolute pod RAM**.
 
 ## File inventory
 
@@ -289,13 +379,21 @@ ml/train.py          ml/baseline.py        ml/drift_metrics.py
 services/inference/app.py        services/inference/Dockerfile
 services/drift_job/drift_job.py  services/drift_job/Dockerfile
 deploy/docker-compose.yml
-deploy/k8s/  (00-namespace 10-config 20-postgres 30-mlflow 40-train-job
-              50-inference[Rollout+AnalysisTemplate, replicas=2,
-                           model-release MODEL_VERSION=2 / release="2"]
-              60-drift-cronjob 70-observability[Prometheus+Pushgateway]).yaml
+deploy/k8s/  (00-namespace 10-config 20-postgres
+              30-mlflow[strategy:Recreate, tolerant probes]
+              40-train-job
+              50-inference[Rollout+AnalysisTemplate, replicas=1 (M5),
+                           startupProbe + tolerant liveness/readiness,
+                           model-release MODEL_VERSION=2 / release="3"]
+              60-drift-cronjob[SUSPENDED — run on demand]
+              70-observability[Prometheus+Pushgateway]
+              80-grafana[Deployment+Svc+provisioned datasource+dashboard]
+              90-lineage-ui[Deployment+Svc, Streamlit]).yaml
 deploy/train-bad-job.yaml   (one-off; NOT in deploy/k8s/ — never auto-applied)
+services/lineage_ui/{app.py,Dockerfile}    (Streamlit lineage receipt page)
 docs/m4-proof/  (m4-good-rollout.txt m4-good-monitor.log
                  m4-bad-rollout.txt m4-bad-events.txt m4-bad-monitor.log)
+docs/m5-proof/  (m5-verification.txt — Grafana/Streamlit live-API proof)
 scripts/inject_drift.py
 ```
 Local (gitignored) state: `.venv/`, `.claude/`, `mlflow.db`, `mlartifacts/`,
@@ -307,8 +405,34 @@ PVCs in the `pipeline-ml` namespace. Binaries on user PATH at
 
 ## How to resume
 
-**M0–M4 are committed and verified.** Next milestone: **M5 — Dashboards
-& polish.**
+**M0–M5 are committed and verified.** The portfolio milestones are
+done. (Honest scope: this is a learning-cluster demo, not a production
+deployment — see resolved-issue #10 for the laptop-VM trade-offs.)
+
+**Open dashboards / re-demo** (cluster already up; if not, `k3d cluster
+start pipeline-ml`, then `kubectl get nodes` — if it errors with
+`host.docker.internal`, apply resolved-issue #4):
+
+```
+kubectl port-forward -n pipeline-ml svc/grafana    3000:3000
+kubectl port-forward -n pipeline-ml svc/lineage-ui 8501:8501
+kubectl port-forward -n pipeline-ml svc/prometheus 9090:9090
+```
+
+Open `http://localhost:3000/d/pipeline-ml` (Grafana, anonymous Admin)
+and `http://localhost:8501` (Streamlit). Generate prediction traffic
+from inside the inference pod (so the volume/latency panels light up),
+and run a one-off drift job to refresh the PSI panel:
+
+```
+POD=$(kubectl get pods -n pipeline-ml -l app=inference -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n pipeline-ml $POD -- python -c "import urllib.request,json,random
+for _ in range(100):
+    b=json.dumps({'features':[round(random.uniform(-2.5,2.5),4) for _ in range(8)]}).encode()
+    urllib.request.urlopen(urllib.request.Request('http://localhost:8000/predict',data=b,headers={'Content-Type':'application/json'}))"
+kubectl delete job drift-m5 -n pipeline-ml --ignore-not-found
+kubectl create job --from=cronjob/drift drift-m5 -n pipeline-ml
+```
 
 **Re-demo the M4 closed loop** (cluster already up; if not, `k3d cluster
 start pipeline-ml`, then `kubectl get nodes` — if it errors with

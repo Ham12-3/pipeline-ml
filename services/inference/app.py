@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,6 +37,13 @@ from db import get_prediction, init_db, log_prediction  # noqa: E402
 from lineage import run_provenance  # noqa: E402
 
 STATE: dict = {}
+
+# In-process serving metrics (volume + latency). Counters only ever grow, so
+# Grafana uses rate()/increase() over them. A lock keeps the read-modify-write
+# safe since FastAPI runs sync endpoints in a threadpool. Hand-tracked for the
+# same reason model_holdout_accuracy is: no new pip dep, image layer unchanged.
+_MX = threading.Lock()
+_M = {"requests": 0, "errors": 0, "latency_sum": 0.0}
 
 
 @asynccontextmanager
@@ -95,19 +104,35 @@ def metrics():
     """
     version = STATE.get("model_version", "unknown")
     acc = STATE.get("holdout_accuracy", 0.0)
+    with _MX:
+        reqs, errs, lat_sum = _M["requests"], _M["errors"], _M["latency_sum"]
+    labels = f'model="{MODEL_NAME}",model_version="{version}"'
     body = (
         "# HELP model_holdout_accuracy Accuracy of the served model on a "
         "fixed labeled holdout.\n"
         "# TYPE model_holdout_accuracy gauge\n"
-        f'model_holdout_accuracy{{model="{MODEL_NAME}",'
-        f'model_version="{version}"}} {acc}\n'
+        f"model_holdout_accuracy{{{labels}}} {acc}\n"
+        "# HELP prediction_requests_total Successful /predict requests served.\n"
+        "# TYPE prediction_requests_total counter\n"
+        f"prediction_requests_total{{{labels}}} {reqs}\n"
+        "# HELP prediction_errors_total Rejected /predict requests (bad input).\n"
+        "# TYPE prediction_errors_total counter\n"
+        f"prediction_errors_total{{{labels}}} {errs}\n"
+        "# HELP prediction_latency_seconds Cumulative /predict latency. "
+        "Grafana derives avg latency as rate(sum)/rate(count).\n"
+        "# TYPE prediction_latency_seconds summary\n"
+        f"prediction_latency_seconds_sum{{{labels}}} {lat_sum}\n"
+        f"prediction_latency_seconds_count{{{labels}}} {reqs}\n"
     )
     return Response(content=body, media_type="text/plain; version=0.0.4")
 
 
 @app.post("/predict")
 def predict(req: PredictRequest):
+    start = time.perf_counter()
     if len(req.features) != N_FEATURES:
+        with _MX:
+            _M["errors"] += 1
         raise HTTPException(
             status_code=422,
             detail=f"expected {N_FEATURES} features, got {len(req.features)}",
@@ -126,6 +151,10 @@ def predict(req: PredictRequest):
         prediction=pred,
         proba=proba,
     )
+
+    with _MX:
+        _M["requests"] += 1
+        _M["latency_sum"] += time.perf_counter() - start
 
     return {
         "prediction_id": prediction_id,

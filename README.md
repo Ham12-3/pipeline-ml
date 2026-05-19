@@ -17,7 +17,7 @@ and automatically rolls back bad model releases (closed loop).
 | M2 | Local Kubernetes (k3d) | ✅ |
 | M3 | Lineage receipt API | ✅ |
 | M4 | Closed loop (Argo Rollouts auto-rollback) | ✅ |
-| M5 | Dashboards & polish (Grafana, Streamlit) | ⏳ |
+| M5 | Dashboards & polish (Grafana, Streamlit) | ✅ |
 
 ## M0 quickstart (pure Python, no Docker/Kubernetes)
 
@@ -222,3 +222,52 @@ kubectl exec -n pipeline-ml deploy/inference -- \
 deliberately-bad model (v4, holdout 0.444) drove `min(model_holdout_accuracy)`
 below the 0.7 gate and Argo **auto-aborted in ~32 s** while the previous good
 model kept serving uninterrupted. Captured runs: [`docs/m4-proof/`](docs/m4-proof/).
+
+## M5 — dashboards & polish (Grafana + Streamlit)
+
+The wall of graphs on top of the Prometheus data, plus a small Streamlit
+page that renders the M3 `/lineage/{id}` receipt as something a human can
+read at a glance.
+
+What's new in M5:
+
+- **Inference `/metrics` extended** with `prediction_requests_total`,
+  `prediction_errors_total`, and `prediction_latency_seconds_{sum,count}`
+  alongside the existing `model_holdout_accuracy`. Hand-rendered to keep the
+  inference image's slow pip layer cached (no new dependency).
+- **Grafana** (`deploy/k8s/80-grafana.yaml`) — Prometheus datasource and a
+  7-panel dashboard (`pipeline-ml — ML reliability`) baked into ConfigMaps
+  so the whole thing comes up identically on every `kubectl apply`, no
+  click-configuration. Anonymous Admin removes the login wall for the demo.
+- **Streamlit lineage UI** (`services/lineage_ui/` +
+  `deploy/k8s/90-lineage-ui.yaml`) — talks only to inference over HTTP;
+  Send a prediction, paste the returned id, see the full receipt as a page.
+
+```bash
+kubectl apply -f deploy/k8s/
+kubectl port-forward -n pipeline-ml svc/grafana    3000:3000   # http://localhost:3000/d/pipeline-ml
+kubectl port-forward -n pipeline-ml svc/lineage-ui 8501:8501   # http://localhost:8501
+```
+
+The Grafana dashboard panels: holdout accuracy by model_version with the 0.7
+canary-gate threshold drawn on; drift PSI (worst feature) with 0.1/0.2
+thresholds; prediction volume (req/s); avg prediction latency; plus stat
+tiles for the current min holdout accuracy, total predictions served, and
+the latest worst PSI.
+
+**Capacity caveat (honest):** the whole single-node k3d sits inside a
+Docker Desktop VM that, on this laptop, is 3.83 GiB. M4 + Grafana +
+Streamlit all at once initially tipped that over and OOM-killed mlflow.
+The fix is documented in PROGRESS.md as resolved-issue #10 and is more
+interesting than "give it more RAM": mlflow gets `strategy: Recreate` so
+rolling updates don't briefly run two pods, inference gets a `startupProbe`
+plus tolerant liveness/readiness so a slow under-load start isn't mistaken
+for a crash, the inference Rollout runs at `replicas: 1` (canary already
+proven in M4), and the drift CronJob is suspended (run on demand). The
+full stack now fits with headroom on 3.83 GiB.
+
+**What M5 proves (verified 2026-05-19):** the platform has the visible
+surface a real reliability tool needs — live dashboards reading the same
+metrics the closed loop is gated on, and a friendly receipt page anyone can
+hand a `prediction_id` to. Live-API verification in
+[`docs/m5-proof/m5-verification.txt`](docs/m5-proof/m5-verification.txt).
